@@ -1,5 +1,5 @@
 #define MyAppName "Pristal-Pilot"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "MrSkrenh"
 #define MyAppExeName "Pristal-Pilot.exe"
 [Setup]
@@ -13,6 +13,8 @@ OutputDir=dist
 OutputBaseFilename=Pristal-Pilot-Setup
 Compression=lzma
 SolidCompression=yes
+CloseApplications=yes
+RestartApplications=no
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64
 [Files]
