@@ -1,6 +1,10 @@
 import json
 import os
 import queue
+import hashlib
+import urllib.request
+import tempfile
+import threading
 import re
 import subprocess
 import threading
@@ -17,6 +21,8 @@ except ImportError:
 DATA = Path(os.getenv("APPDATA", str(Path.home()))) / "Pristal-Pilot"
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
+APP_VERSION = "0.2.0"
+GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
 BG, PANEL, PANEL2 = "#0d1119", "#151d2a", "#1c2737"
 FG, MUTED, BLUE, GREEN, RED = "#edf2fa", "#94a3b8", "#6488ff", "#35c58a"
 
@@ -77,8 +83,11 @@ class App:
                  font=("Segoe UI", 23, "bold")).pack(side="left")
         tk.Label(header, text="by MrSkrenh  /  MINECRAFT SERVER CONTROL",
                  bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(side="left", padx=16, pady=11)
-        tk.Label(header, text="HOST PANEL", bg="#202e46", fg="#9db7ff",
-                 font=("Segoe UI", 8, "bold"), padx=12, pady=6).pack(side="right")
+        tk.Button(header, text="↻  Проверить обновления", command=self.check_updates,
+                  bg="#202e46", fg="#b9cbff", activebackground="#2b3d5b",
+                  relief="flat", font=("Segoe UI", 9, "bold"), padx=12, pady=8).pack(side="right")
+        tk.Label(header, text=f"v{APP_VERSION}", bg=BG, fg=MUTED,
+                 font=("Segoe UI", 8)).pack(side="right", padx=10)
 
         body = tk.Frame(self.root, bg=BG)
         body.pack(fill="both", expand=True, padx=22)
@@ -401,6 +410,90 @@ class App:
             self.tps_value.config(text="—")
             self.players_value.config(text="—")
         self.root.after(1000, self.update_metrics)
+
+
+    def check_updates(self):
+        self.log("Проверяем обновления на GitHub…")
+        button_thread = threading.Thread(target=self._check_updates_worker, daemon=True)
+        button_thread.start()
+
+    def _check_updates_worker(self):
+        try:
+            request = urllib.request.Request(
+                GITHUB_RELEASE_API,
+                headers={"Accept": "application/vnd.github+json",
+                         "User-Agent": "Pristal-Pilot-Updater"}
+            )
+            with urllib.request.urlopen(request, timeout=20) as response:
+                release = json.loads(response.read().decode("utf-8"))
+            latest = release.get("tag_name", "").lstrip("v")
+            current_parts = tuple(int(x) for x in APP_VERSION.split("."))
+            latest_parts = tuple(int(x) for x in latest.split("."))
+            if latest_parts <= current_parts:
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "Обновления", f"У вас актуальная версия Pristal-Pilot ({APP_VERSION})."))
+                return
+            asset = next((a for a in release.get("assets", [])
+                          if a.get("name") == "Pristal-Pilot-Setup.exe"), None)
+            if not asset:
+                raise RuntimeError("В последнем релизе не найден Pristal-Pilot-Setup.exe.")
+            notes = release.get("body") or "Список изменений не опубликован."
+            self.root.after(0, lambda: self._offer_update(latest, asset, notes))
+        except Exception as error:
+            self.root.after(0, lambda err=str(error): messagebox.showerror(
+                "Проверка обновлений", f"Не удалось проверить обновления:\n{err}"))
+
+    def _offer_update(self, version, asset, notes):
+        if not messagebox.askyesno(
+            "Доступно обновление",
+            f"Доступна версия {version} (установлена {APP_VERSION}).\n\n"
+            f"{notes[:1800]}\n\nСкачать и установить обновление сейчас?"
+        ):
+            return
+        threading.Thread(target=self._download_and_install, args=(asset,), daemon=True).start()
+
+    def _download_and_install(self, asset):
+        try:
+            url = asset.get("browser_download_url")
+            if not url or not url.startswith("https://github.com/"):
+                raise RuntimeError("Ссылка на установщик недействительна.")
+            self.root.after(0, lambda: self.log("Скачиваем обновление…"))
+            target = Path(tempfile.gettempdir()) / "Pristal-Pilot-Update.exe"
+            request = urllib.request.Request(url, headers={"User-Agent": "Pristal-Pilot-Updater"})
+            digest = hashlib.sha256()
+            with urllib.request.urlopen(request, timeout=60) as response, target.open("wb") as output:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    output.write(chunk)
+                    digest.update(chunk)
+            expected = asset.get("digest")
+            if expected and expected.startswith("sha256:"):
+                if digest.hexdigest().lower() != expected.split(":", 1)[1].lower():
+                    target.unlink(missing_ok=True)
+                    raise RuntimeError("Контрольная сумма установщика не совпала. Обновление отменено.")
+            self.root.after(0, lambda: self.log("Загрузка завершена. Подготавливаем установку…"))
+            # A detached helper waits for this process to exit, installs silently, then relaunches the app.
+            helper = Path(tempfile.gettempdir()) / "pristal_pilot_update.cmd"
+            pid = os.getpid()
+            exe = str(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Pristal-Pilot" / "Pristal-Pilot.exe")
+            helper.write_text(
+                "@echo off\r\n"
+                f":waitloop\r\ntasklist /FI \"PID eq {pid}\" 2>NUL | find \"{pid}\" >NUL\r\n"
+                "if not errorlevel 1 (timeout /t 1 /nobreak >NUL & goto waitloop)\r\n"
+                f"start /wait \"\" \"{target}\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n"
+                f"if exist \"{exe}\" start \"\" \"{exe}\"\r\n"
+                "del \"%~f0\"\r\n",
+                encoding="utf-8"
+            )
+            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+            subprocess.Popen(["cmd.exe", "/c", str(helper)], creationflags=creationflags,
+                             close_fds=True)
+            self.root.after(0, self.root.destroy)
+        except Exception as error:
+            self.root.after(0, lambda err=str(error): messagebox.showerror(
+                "Ошибка обновления", f"Не удалось установить обновление:\n{err}"))
 
     def close(self):
         active = [p["name"] for p in self.items if self.running(p)]
