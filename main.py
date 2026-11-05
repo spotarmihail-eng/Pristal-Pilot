@@ -77,7 +77,15 @@ class App:
         style.map("Treeview", background=[("selected", "#2b3d5b")],
                   foreground=[("selected", FG)])
 
-        header = tk.Frame(self.root, bg=BG)
+        # Main application tabs
+        tabs = ttk.Notebook(self.root)
+        tabs.pack(fill="both", expand=True, padx=10, pady=10)
+        main_tab = tk.Frame(tabs, bg=BG)
+        about_tab = tk.Frame(tabs, bg=BG)
+        tabs.add(main_tab, text="Панель серверов")
+        tabs.add(about_tab, text="О программе")
+
+        header = tk.Frame(main_tab, bg=BG)
         header.pack(fill="x", padx=22, pady=(18, 14))
         tk.Label(header, text="PRISTAL-PILOT", bg=BG, fg=FG,
                  font=("Segoe UI", 23, "bold")).pack(side="left")
@@ -89,7 +97,7 @@ class App:
         tk.Label(header, text=f"v{APP_VERSION}", bg=BG, fg=MUTED,
                  font=("Segoe UI", 8)).pack(side="right", padx=10)
 
-        body = tk.Frame(self.root, bg=BG)
+        body = tk.Frame(main_tab, bg=BG)
         body.pack(fill="both", expand=True, padx=22)
 
         # Left: server list
@@ -168,9 +176,39 @@ class App:
                  bg=PANEL, fg=MUTED, justify="left",
                  font=("Segoe UI", 8)).pack(anchor="w", padx=13, pady=12)
 
-        tk.Label(self.root,
-                 text="Разработана MrSkrenh  •  Бесплатная программа  •  Данные серверов хранятся отдельно",
+        tk.Label(main_tab,
+                 text="Данные серверов хранятся отдельно",
                  bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(pady=10)
+
+        # About / author tab
+        about_card = tk.Frame(about_tab, bg=PANEL, padx=34, pady=30)
+        about_card.pack(fill="both", expand=True, padx=90, pady=55)
+        tk.Label(about_card, text="PRISTAL-PILOT", bg=PANEL, fg=FG,
+                 font=("Segoe UI", 25, "bold")).pack(anchor="w")
+        tk.Label(about_card, text="Разработано MrSkrenh", bg=PANEL, fg=FG,
+                 font=("Segoe UI", 15, "bold")).pack(anchor="w", pady=(22, 6))
+        tk.Label(about_card, text="Программа бесплатная.", bg=PANEL, fg=MUTED,
+                 font=("Segoe UI", 11)).pack(anchor="w", pady=(0, 22))
+
+        def open_author_link(url):
+            import webbrowser
+            webbrowser.open(url)
+
+        author_links = [
+            ("Discord", "https://discord.gg/vywgQxyJt"),
+            ("Twitch", "https://www.twitch.tv/skrenhtv"),
+            ("YouTube", "https://www.youtube.com/@skrenh"),
+            ("Поддержать автора", "https://new.donatepay.ru/donate/1530153"),
+        ]
+        for label, url in author_links:
+            tk.Button(about_card, text=label, command=lambda link=url: open_author_link(link),
+                      bg=BLUE if label != "Поддержать автора" else GREEN,
+                      fg="white", activebackground="#5275e8", relief="flat",
+                      font=("Segoe UI", 10, "bold"), padx=18, pady=11,
+                      anchor="w").pack(fill="x", pady=5)
+
+        tk.Label(about_card, text="Спасибо, что используете Pristal-Pilot!",
+                 bg=PANEL, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(22, 0))
 
     def log(self, text):
         self.output.configure(state="normal")
