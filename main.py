@@ -8,6 +8,7 @@ import threading
 import re
 import subprocess
 import threading
+import sys
 import time
 import tkinter as tk
 from pathlib import Path
@@ -477,7 +478,7 @@ class App:
             # A detached helper waits for this process to exit, installs silently, then relaunches the app.
             helper = Path(tempfile.gettempdir()) / "pristal_pilot_update.cmd"
             pid = os.getpid()
-            exe = str(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Pristal-Pilot" / "Pristal-Pilot.exe")
+            exe = str(Path(sys.executable))
             helper.write_text(
                 "@echo off\r\n"
                 f":waitloop\r\ntasklist /FI \"PID eq {pid}\" 2>NUL | find \"{pid}\" >NUL\r\n"
