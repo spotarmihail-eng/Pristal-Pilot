@@ -4,7 +4,6 @@ import queue
 import hashlib
 import urllib.request
 import tempfile
-import threading
 import re
 import subprocess
 import threading
