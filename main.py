@@ -322,14 +322,17 @@ class App:
         if active >= 3:
             messagebox.showwarning("Лимит серверов", "Можно одновременно запускать не более 3 серверов.")
             return
-        jar = Path(profile["folder"]) / profile["jar"]
-        if not jar.is_file():
+        jar = Path(profile["folder"]) / profile.get("jar", "server.jar")
+        if not profile.get("launch_args") and not jar.is_file():
             selected = filedialog.askopenfilename(
                 initialdir=profile["folder"], filetypes=[("Java JAR", "*.jar")])
             if not selected:
                 return
             profile["folder"], profile["jar"] = str(Path(selected).parent), Path(selected).name
             self.save()
+        if profile.get("launch_args") and not (Path(profile["folder"]) / profile["launch_args"].lstrip("@")).is_file():
+            messagebox.showerror("Файлы ядра", "Не найден файл аргументов запуска Forge/NeoForge. Попробуйте создать сервер заново.")
+            return
         try:
             low, high = int(float(profile["minimum"])), int(float(profile["ram"]))
             if low <= 0 or high < low:
