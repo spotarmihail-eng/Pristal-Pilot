@@ -22,7 +22,7 @@ except ImportError:
 DATA = Path(os.getenv("APPDATA", str(Path.home()))) / "Pristal-Pilot"
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
 BG, PANEL, PANEL2 = "#0d1119", "#151d2a", "#1c2737"
 FG, MUTED, BLUE, GREEN, RED = "#edf2fa", "#94a3b8", "#6488ff", "#35c58a", "#b94d60"
@@ -86,9 +86,24 @@ class App:
         tabs = ttk.Notebook(self.root)
         tabs.pack(fill="both", expand=True, padx=10, pady=10)
         main_tab = tk.Frame(tabs, bg=BG)
+        files_tab = tk.Frame(tabs, bg=BG)
         about_tab = tk.Frame(tabs, bg=BG)
         tabs.add(main_tab, text="Панель серверов")
+        tabs.add(files_tab, text="Файлы")
         tabs.add(about_tab, text="О программе")
+
+        files_card = tk.Frame(files_tab, bg=PANEL, padx=30, pady=26)
+        files_card.pack(fill="both", expand=True, padx=70, pady=55)
+        tk.Label(files_card, text="ФАЙЛЫ СЕРВЕРА", bg=PANEL, fg=FG,
+                 font=("Segoe UI", 19, "bold")).pack(anchor="w")
+        tk.Label(files_card,
+                 text="Откройте папку выбранного сервера: миры, конфигурации, плагины и моды. Файлы самой программы здесь недоступны.",
+                 bg=PANEL, fg=MUTED, wraplength=650, justify="left",
+                 font=("Segoe UI", 10)).pack(anchor="w", pady=(12, 22))
+        tk.Button(files_card, text="Открыть папку выбранного сервера",
+                  command=self.open_server_files, bg=BLUE, fg="white",
+                  activebackground="#5275e8", relief="flat",
+                  font=("Segoe UI", 10, "bold"), padx=18, pady=12).pack(anchor="w")
 
         header = tk.Frame(main_tab, bg=BG)
         header.pack(fill="x", padx=22, pady=(18, 14))
@@ -251,6 +266,87 @@ class App:
                            fg=GREEN if self.running(profile) else "#e3a4ad")
         self.log(f'Выбран сервер: {profile["name"]}')
 
+    def open_server_files(self):
+        profile = self.current()
+        if not profile:
+            messagebox.showinfo("Файлы сервера", "Сначала выберите сервер.")
+            return
+        try:
+            folder = Path(profile["folder"]).expanduser().resolve(strict=True)
+            if not folder.is_dir():
+                raise RuntimeError("Папка сервера не найдена.")
+            app_root = (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
+                        else Path(__file__).resolve().parent)
+            protected_roots = [app_root, DATA.resolve()]
+            for protected in protected_roots:
+                if folder == protected or protected in folder.parents or folder in protected.parents:
+                    raise RuntimeError("Эта папка относится к программе или её служебным данным. Открывать её через вкладку «Файлы» нельзя.")
+            if os.name == "nt":
+                os.startfile(str(folder))
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(folder)])
+            else:
+                subprocess.Popen(["xdg-open", str(folder)])
+        except Exception as error:
+            messagebox.showerror("Файлы сервера", str(error))
+
+    def show_eula_dialog(self, profile):
+        window = tk.Toplevel(self.root)
+        window.title("Лицензионное соглашение Minecraft")
+        window.configure(bg=PANEL)
+        window.resizable(False, False)
+        window.transient(self.root)
+        window.grab_set()
+
+        tk.Label(window, text="ПЕРЕД ПЕРВЫМ ЗАПУСКОМ", bg=PANEL, fg=FG,
+                 font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=22, pady=(20, 10))
+        tk.Label(window,
+                 text="Для запуска сервера необходимо ознакомиться с лицензионным соглашением Minecraft (EULA).",
+                 bg=PANEL, fg=MUTED, wraplength=460, justify="left",
+                 font=("Segoe UI", 10)).pack(anchor="w", padx=22, pady=(0, 8))
+
+        def open_eula():
+            import webbrowser
+            webbrowser.open("https://www.minecraft.net/eula")
+
+        tk.Button(window, text="Открыть правила EULA на сайте Minecraft",
+                  command=open_eula, bg="#303e53", fg=FG, relief="flat",
+                  padx=12, pady=8).pack(anchor="w", padx=22, pady=(0, 14))
+
+        accepted = tk.BooleanVar(value=False)
+        tk.Checkbutton(window, text="Я согласен с правилами EULA",
+                       variable=accepted, bg=PANEL, fg=FG, selectcolor=BG,
+                       activebackground=PANEL, activeforeground=FG,
+                       font=("Segoe UI", 10)).pack(anchor="w", padx=22, pady=8)
+
+        def confirm():
+            if not accepted.get():
+                return
+            try:
+                eula_path = Path(profile["folder"]) / "eula.txt"
+                eula_path.write_text("# Minecraft EULA accepted in Pristal-Pilot\\neula=true\\n",
+                                     encoding="utf-8")
+                profile["eula_accepted"] = True
+                self.save()
+                window.grab_release()
+                window.destroy()
+                self.log("EULA принята для сервера " + profile["name"] + ".")
+            except OSError as error:
+                messagebox.showerror("EULA", f"Не удалось сохранить принятие EULA:\\n{error}", parent=window)
+
+        buttons = tk.Frame(window, bg=PANEL)
+        buttons.pack(fill="x", padx=22, pady=(12, 20))
+        ok_button = tk.Button(buttons, text="ОК", command=confirm,
+                              state="disabled", bg=BLUE, fg="white",
+                              disabledforeground="#77839a", relief="flat",
+                              padx=24, pady=9)
+        ok_button.pack(side="right")
+        tk.Label(buttons, text="Без согласия сервер нельзя запустить",
+                 bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).pack(side="left")
+        accepted.trace_add("write", lambda *_: ok_button.config(
+            state="normal" if accepted.get() else "disabled"))
+        window.protocol("WM_DELETE_WINDOW", window.destroy)
+
     def add(self):
         name = simpledialog.askstring("Новый сервер", "Название сервера:")
         if not name:
@@ -315,6 +411,16 @@ class App:
         if not profile:
             messagebox.showinfo("Pristal-Pilot", "Выберите сервер.")
             return
+        eula_path = Path(profile["folder"]) / "eula.txt"
+        try:
+            eula_text = eula_path.read_text(encoding="utf-8", errors="replace") if eula_path.is_file() else ""
+        except OSError:
+            eula_text = ""
+        if not re.search(r"(?im)^\\s*eula\\s*=\\s*true\\s*$", eula_text):
+            profile["eula_accepted"] = False
+            self.show_eula_dialog(profile)
+            return
+        profile["eula_accepted"] = True
         if self.running(profile):
             self.log("Этот сервер уже запущен.")
             return
@@ -635,15 +741,16 @@ class App:
             (target / "server.properties").write_text(f"server-port={port}\n", encoding="utf-8")
             profile = {"id": os.urandom(8).hex(), "name": name, "folder": str(target),
                        "jar": "server.jar", "launch_args": launch_args,
-                       "java": java, "ram": ram, "minimum": minimum, "port": str(port), "core": core, "version": version}
+                       "java": java, "ram": ram, "minimum": minimum, "port": str(port),
+                       "core": core, "version": version, "eula_accepted": False}
             def done():
                 self.items.append(profile)
                 self.selected = len(self.items) - 1
                 self.save()
                 self.refresh_servers()
                 self.choose()
-                self.log(f"{core} {version} создан. Перед запуском проверьте EULA.")
-                messagebox.showinfo("Сервер создан", "Ядро загружено. Откройте eula.txt и установите eula=true, если принимаете лицензионное соглашение Minecraft.")
+                self.log(f"{core} {version} создан. Ожидается подтверждение EULA.")
+                self.show_eula_dialog(profile)
             self.root.after(0, done)
         except Exception as error:
             self.root.after(0, lambda err=str(error): messagebox.showerror("Ошибка создания сервера", err))
