@@ -491,7 +491,7 @@ class App:
         win.resizable(False, False)
         fields = {}
         rows = [("Название", "name", "Мой сервер"), ("Ядро", "core", "Paper"),
-                ("Версия Minecraft", "version", "1.21.4"), ("Java (команда или путь)", "java", "java"),
+                ("Версия Minecraft", "version", "1.21.4"), ("Java (java / java17 / java21 / путь)", "java", "java"),
                 ("RAM максимум, GB", "ram", "4"), ("RAM минимум, GB", "minimum", "1"),
                 ("Порт", "port", "25565")]
         tk.Label(win, text="СОЗДАНИЕ СЕРВЕРА", bg=PANEL, fg=FG,
@@ -500,6 +500,9 @@ class App:
             tk.Label(win, text=label, bg=PANEL, fg=MUTED).grid(row=row, column=0, padx=18, pady=7, sticky="w")
             if key == "core":
                 widget = ttk.Combobox(win, values=["Paper", "Purpur", "Vanilla"], state="readonly", width=28)
+                widget.set(default)
+            elif key == "java":
+                widget = ttk.Combobox(win, values=["java", "java17", "java21", "java8"], width=28)
                 widget.set(default)
             else:
                 widget = tk.Entry(win, width=31, bg=BG, fg=FG, insertbackground=FG, relief="flat")
