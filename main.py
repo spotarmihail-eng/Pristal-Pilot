@@ -228,6 +228,7 @@ class App:
             self.show_home()
             return
         self.current_section = section
+        self.refresh_disk_usage(profile)
         for child in self.nav_area.winfo_children():
             child.destroy()
         self.nav_button("←  Назад к серверам", self.show_home).pack(fill="x", pady=(0, 12))
@@ -280,6 +281,32 @@ class App:
             self.render_startup_entry()
         elif section in ("plugins", "mods"):
             self.render_catalog_entry(section)
+
+    def refresh_disk_usage(self, profile):
+        self.disk_value.config(text="Считаем…")
+        folder = profile.get("folder", "")
+        profile_id = profile.get("id")
+
+        def measure():
+            total = 0
+            try:
+                for root, _dirs, files in os.walk(folder):
+                    for filename in files:
+                        try:
+                            total += os.path.getsize(os.path.join(root, filename))
+                        except OSError:
+                            continue
+                value = f"{total / (1024 ** 3):.2f} GiB"
+            except OSError:
+                value = "—"
+
+            def update():
+                current = self.current()
+                if current and current.get("id") == profile_id and self.disk_value.winfo_exists():
+                    self.disk_value.config(text=value)
+            self.root.after(0, update)
+
+        threading.Thread(target=measure, daemon=True).start()
 
     def render_console(self):
         profile = self.current()
