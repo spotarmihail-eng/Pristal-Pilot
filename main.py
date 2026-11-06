@@ -577,10 +577,8 @@ class App:
             elif core in ("Forge", "NeoForge"):
                 import xml.etree.ElementTree as ET
                 if core == "Forge":
-                    promotions = None
-                    if promotions is None:
-                        with urllib.request.urlopen(urllib.request.Request("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json", headers=headers), timeout=30) as response:
-                            promotions = json.loads(response.read().decode("utf-8"))
+                    with urllib.request.urlopen(urllib.request.Request("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json", headers=headers), timeout=30) as response:
+                        promotions = json.loads(response.read().decode("utf-8"))
                     builds = promotions.get("promos", {})
                     forge_version = builds.get(version + "-recommended") or builds.get(version + "-latest")
                     if not forge_version:
@@ -591,8 +589,10 @@ class App:
                     metadata_url = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
                     with urllib.request.urlopen(urllib.request.Request(metadata_url, headers=headers), timeout=30) as response:
                         xml_root = ET.fromstring(response.read())
+                    # NeoForge uses MC-style prefixes without the leading "1." (e.g. 21.1 for MC 1.21.1).
+                    neoforge_mc_prefix = version[2:] if version.startswith("1.") else version
                     candidates = [node.text for node in xml_root.findall(".//version")
-                                  if node.text and node.text.startswith(version + ".")]
+                                  if node.text and node.text.startswith(neoforge_mc_prefix + ".")]
                     if not candidates:
                         raise RuntimeError(f"NeoForge: не найдена сборка для Minecraft {version}.")
                     def version_key(value):
