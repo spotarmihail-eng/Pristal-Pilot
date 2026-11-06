@@ -577,7 +577,7 @@ class App:
             elif core in ("Forge", "NeoForge"):
                 import xml.etree.ElementTree as ET
                 if core == "Forge":
-                    promotions = get_json("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json") if "get_json" in locals() else None
+                    promotions = None
                     if promotions is None:
                         with urllib.request.urlopen(urllib.request.Request("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json", headers=headers), timeout=30) as response:
                             promotions = json.loads(response.read().decode("utf-8"))
@@ -596,7 +596,7 @@ class App:
                     if not candidates:
                         raise RuntimeError(f"NeoForge: не найдена сборка для Minecraft {version}.")
                     def version_key(value):
-                        return tuple(int(part) if part.isdigit() else part for part in re.findall(r"\\d+|[A-Za-z]+", value))
+                        return tuple(int(part) if part.isdigit() else part for part in re.findall(r"\d+|[A-Za-z]+", value))
                     installer_version = sorted(candidates, key=version_key)[-1]
                     installer_url = f"https://maven.neoforged.net/releases/net/neoforged/neoforge/{installer_version}/neoforge-{installer_version}-installer.jar"
                 installer_path = target / "modloader-installer.jar"
@@ -606,15 +606,15 @@ class App:
                                          cwd=str(target), capture_output=True, text=True, timeout=900)
                 if install.returncode != 0:
                     details = (install.stderr or install.stdout or "Нет подробностей")[-2500:]
-                    raise RuntimeError(f"{core}: установка завершилась с ошибкой. Проверьте Java и версию.\\n{details}")
+                    raise RuntimeError(f"{core}: установка завершилась с ошибкой. Проверьте Java и версию.\n{details}")
                 installer_path.unlink(missing_ok=True)
                 if core == "Forge":
-                    args_files = list((target / "libraries").glob("net/minecraftforge/forge/*/unix_args.txt"))
+                    args_files = list((target / "libraries").glob("net/minecraftforge/forge/*/win_args.txt")) or list((target / "libraries").glob("net/minecraftforge/forge/*/unix_args.txt"))
                 else:
-                    args_files = list((target / "libraries").glob("net/neoforged/neoforge/*/unix_args.txt"))
+                    args_files = list((target / "libraries").glob("net/neoforged/neoforge/*/win_args.txt")) or list((target / "libraries").glob("net/neoforged/neoforge/*/unix_args.txt"))
                 if not args_files:
                     raise RuntimeError(f"{core}: установщик не создал unix_args.txt; проверьте журнал установщика.")
-                launch_args = "@" + str(args_files[-1].relative_to(target)).replace("\\\\", "/")
+                launch_args = "@" + str(args_files[-1].relative_to(target)).replace("\\", "/")
             else:
                 with urllib.request.urlopen("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json", timeout=30) as response:
                     manifest = json.loads(response.read().decode("utf-8"))
@@ -628,8 +628,8 @@ class App:
                 request = urllib.request.Request(url, headers=headers)
                 with urllib.request.urlopen(request, timeout=180) as response, (target / "server.jar").open("wb") as output:
                     shutil.copyfileobj(response, output)
-            (target / "eula.txt").write_text("eula=false\\n", encoding="utf-8")
-            (target / "server.properties").write_text(f"server-port={port}\\n", encoding="utf-8")
+            (target / "eula.txt").write_text("eula=false\n", encoding="utf-8")
+            (target / "server.properties").write_text(f"server-port={port}\n", encoding="utf-8")
             profile = {"id": os.urandom(8).hex(), "name": name, "folder": str(target),
                        "jar": "server.jar", "launch_args": launch_args,
                        "java": java, "ram": ram, "minimum": minimum, "port": str(port), "core": core, "version": version}
