@@ -22,7 +22,7 @@ except ImportError:
 DATA = Path(os.getenv("APPDATA", str(Path.home()))) / "Pristal-Pilot"
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
-APP_VERSION = "0.6.1"
+APP_VERSION = "0.7.0"
 GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
 BG, PANEL, PANEL2 = "#0d1119", "#151d2a", "#1c2737"
 FG, MUTED, BLUE, GREEN, RED = "#edf2fa", "#94a3b8", "#6488ff", "#35c58a", "#b94d60"
@@ -41,8 +41,8 @@ class App:
         except Exception:
             self.items = []
         self.root.title("Pristal-Pilot by MrSkrenh")
-        self.root.geometry("1280x790")
-        self.root.minsize(1050, 680)
+        self.root.geometry("1440x850")
+        self.root.minsize(1180, 700)
         self.root.configure(bg=BG)
         self.build_ui()
         self.refresh_servers()
@@ -78,161 +78,297 @@ class App:
                         foreground=FG, rowheight=38, borderwidth=0)
         style.map("Treeview", background=[("selected", "#2b3d5b")],
                   foreground=[("selected", FG)])
-        style.configure("TNotebook", background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab", background=PANEL, foreground=FG, padding=(18, 10), font=("Segoe UI", 9, "bold"))
-        style.map("TNotebook.Tab", background=[("selected", "#263754")])
+        self.root.configure(bg=BG)
 
-        # Main application tabs
-        tabs = ttk.Notebook(self.root)
-        tabs.pack(fill="both", expand=True, padx=10, pady=10)
-        main_tab = tk.Frame(tabs, bg=BG)
-        files_tab = tk.Frame(tabs, bg=BG)
-        about_tab = tk.Frame(tabs, bg=BG)
-        tabs.add(main_tab, text="Панель серверов")
-        tabs.add(files_tab, text="Файлы")
-        tabs.add(about_tab, text="О программе")
+        shell = tk.Frame(self.root, bg=BG)
+        shell.pack(fill="both", expand=True)
 
-        files_card = tk.Frame(files_tab, bg=PANEL, padx=30, pady=26)
-        files_card.pack(fill="both", expand=True, padx=70, pady=55)
-        tk.Label(files_card, text="ФАЙЛЫ СЕРВЕРА", bg=PANEL, fg=FG,
+        # Постоянная левая навигация: на главном экране — разделы приложения,
+        # внутри сервера — навигация по разделам выбранного сервера.
+        self.sidebar = tk.Frame(shell, bg=PANEL, width=218)
+        self.sidebar.pack(side="left", fill="y")
+        self.sidebar.pack_propagate(False)
+        self.nav_header = tk.Frame(self.sidebar, bg=PANEL)
+        self.nav_header.pack(fill="x", padx=14, pady=(18, 22))
+        tk.Label(self.nav_header, text="PRISTAL", bg=PANEL, fg=FG,
                  font=("Segoe UI", 19, "bold")).pack(anchor="w")
-        tk.Label(files_card,
-                 text="Откройте папку выбранного сервера: миры, конфигурации, плагины и моды. Файлы самой программы здесь недоступны.",
-                 bg=PANEL, fg=MUTED, wraplength=650, justify="left",
-                 font=("Segoe UI", 10)).pack(anchor="w", pady=(12, 22))
-        tk.Button(files_card, text="Открыть папку выбранного сервера",
-                  command=self.open_server_files, bg=BLUE, fg="white",
-                  activebackground="#5275e8", relief="flat",
-                  font=("Segoe UI", 10, "bold"), padx=18, pady=12).pack(anchor="w")
+        tk.Label(self.nav_header, text="PILOT  •  by MrSkrenh", bg=PANEL,
+                 fg=MUTED, font=("Segoe UI", 8, "bold")).pack(anchor="w")
 
-        header = tk.Frame(main_tab, bg=BG)
-        header.pack(fill="x", padx=22, pady=(18, 14))
-        tk.Label(header, text="PRISTAL-PILOT", bg=BG, fg=FG,
-                 font=("Segoe UI", 23, "bold")).pack(side="left")
-        tk.Label(header, text="by MrSkrenh  /  MINECRAFT SERVER CONTROL",
-                 bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(side="left", padx=16, pady=11)
-        tk.Button(header, text="IP и доступ", command=self.show_network_info, bg="#263754", fg=FG, relief="flat", padx=12, pady=8).pack(side="right", padx=(0, 8))
-        tk.Button(header, text="↻  Проверить обновления", command=self.check_updates,
-                  bg="#202e46", fg="#b9cbff", activebackground="#2b3d5b",
-                  relief="flat", font=("Segoe UI", 9, "bold"), padx=12, pady=8).pack(side="right")
-        tk.Label(header, text=f"v{APP_VERSION}", bg=BG, fg=MUTED,
-                 font=("Segoe UI", 8)).pack(side="right", padx=10)
+        self.nav_area = tk.Frame(self.sidebar, bg=PANEL)
+        self.nav_area.pack(fill="both", expand=True, padx=9)
+        self.sidebar_footer = tk.Frame(self.sidebar, bg=PANEL)
+        self.sidebar_footer.pack(fill="x", padx=12, pady=12)
 
-        body = tk.Frame(main_tab, bg=BG)
-        body.pack(fill="both", expand=True, padx=22)
+        self.workspace = tk.Frame(shell, bg=BG)
+        self.workspace.pack(side="left", fill="both", expand=True)
+        self.content = tk.Frame(self.workspace, bg=BG)
+        self.content.pack(fill="both", expand=True, padx=20, pady=18)
 
-        # Left: server list
-        left = tk.Frame(body, bg=PANEL, width=245)
-        left.pack(side="left", fill="y")
-        left.pack_propagate(False)
-        tk.Label(left, text="МОИ СЕРВЕРЫ", bg=PANEL, fg=MUTED,
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=15, pady=(16, 10))
-        self.tree = ttk.Treeview(left, show="tree", selectmode="browse")
-        self.tree.pack(fill="both", expand=True, padx=8)
-        self.tree.bind("<<TreeviewSelect>>", self.choose)
-        tk.Button(left, text="+  Создать сервер", command=self.create_server_wizard, bg=BLUE, fg="white", relief="flat", font=("Segoe UI", 9, "bold"), pady=11).pack(fill="x", padx=10, pady=(12, 5))
-        tk.Button(left, text="Добавить существующий", command=self.add,
-                  bg=BLUE, fg="white", activebackground="#5275e8",
-                  relief="flat", font=("Segoe UI", 9, "bold"), pady=11).pack(fill="x", padx=10, pady=12)
-        self.limit_label = tk.Label(left, text="Одновременно: 0 / 3",
-                                    bg=PANEL, fg=MUTED, font=("Segoe UI", 8))
-        self.limit_label.pack(anchor="w", padx=14, pady=(0, 12))
-
-        # Center: controls and console
-        center = tk.Frame(body, bg=BG)
-        center.pack(side="left", fill="both", expand=True, padx=15)
-        self.server_title = tk.Label(center, text="Выберите сервер", bg=BG, fg=FG,
-                                     font=("Segoe UI", 20, "bold"))
-        self.server_title.pack(anchor="w")
-        self.server_info = tk.Label(center, text="Добавьте профиль, чтобы начать работу",
-                                    bg=BG, fg=MUTED, font=("Segoe UI", 9))
-        self.server_info.pack(anchor="w", pady=(5, 13))
-
-        controls = tk.Frame(center, bg=BG)
-        controls.pack(fill="x", pady=(0, 13))
-        for label, color, action in [
-            ("▶  Запустить", GREEN, self.start),
-            ("■  Остановить", "#b94d60", self.stop),
-            ("↻  Перезапустить", "#465a7b", self.restart),
-            ("⚙  Настройки", "#303e53", self.edit),
-        ]:
-            tk.Button(controls, text=label, command=action, bg=color, fg="white",
-                      activebackground=color, relief="flat",
-                      font=("Segoe UI", 9, "bold"), padx=11, pady=9).pack(side="left", padx=(0, 7))
-
-        console_head = tk.Frame(center, bg=PANEL, padx=12, pady=9)
-        console_head.pack(fill="x")
-        tk.Label(console_head, text="КОНСОЛЬ СЕРВЕРА", bg=PANEL, fg=MUTED,
-                 font=("Segoe UI", 8, "bold")).pack(side="left")
-        self.status = tk.Label(console_head, text="● ОСТАНОВЛЕН", bg=PANEL, fg="#e3a4ad",
-                               font=("Segoe UI", 8, "bold"))
-        self.status.pack(side="right")
-        self.output = tk.Text(center, bg="#080c12", fg="#c8d6e9",
-                              insertbackground=FG, font=("Consolas", 9),
-                              state="disabled", relief="flat", wrap="word")
-        self.output.pack(fill="both", expand=True)
-        command_row = tk.Frame(center, bg=BG)
-        command_row.pack(fill="x", pady=10)
-        self.command = tk.Entry(command_row, bg=PANEL, fg=FG, insertbackground=FG,
-                                relief="flat", font=("Consolas", 10))
-        self.command.pack(side="left", fill="x", expand=True, ipady=10)
-        self.command.bind("<Return>", lambda _event: self.send())
-        tk.Button(command_row, text="Отправить", command=self.send, bg=BLUE,
-                  fg="white", relief="flat", padx=15, pady=8).pack(side="right", padx=(8, 0))
-
-        # Right: live resource panel
-        right = tk.Frame(body, bg=PANEL, width=205)
-        right.pack(side="right", fill="y")
-        right.pack_propagate(False)
-        tk.Label(right, text="МОНИТОРИНГ", bg=PANEL, fg=MUTED,
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=13, pady=(16, 12))
-        self.ram_card, self.ram_value = self.card(right, "RAM процесса")
+        self.monitor = tk.Frame(shell, bg=PANEL, width=218)
+        self.monitor.pack(side="right", fill="y")
+        self.monitor.pack_propagate(False)
+        tk.Label(self.monitor, text="МОНИТОРИНГ", bg=PANEL, fg=MUTED,
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=14, pady=(20, 14))
+        self.ram_card, self.ram_value = self.card(self.monitor, "RAM процесса")
         self.ram_card.pack(fill="x", padx=10, pady=5)
-        self.cpu_card, self.cpu_value = self.card(right, "CPU · % одного ядра")
+        self.cpu_card, self.cpu_value = self.card(self.monitor, "CPU · % одного ядра")
         self.cpu_card.pack(fill="x", padx=10, pady=5)
-        self.tps_card, self.tps_value = self.card(right, "TPS")
+        self.disk_card, self.disk_value = self.card(self.monitor, "Диск сервера")
+        self.disk_card.pack(fill="x", padx=10, pady=5)
+        self.tps_card, self.tps_value = self.card(self.monitor, "TPS")
         self.tps_card.pack(fill="x", padx=10, pady=5)
-        self.players_card, self.players_value = self.card(right, "Игроки")
+        self.players_card, self.players_value = self.card(self.monitor, "Игроки")
         self.players_card.pack(fill="x", padx=10, pady=5)
-        self.adaptive_label = tk.Label(right, text="АВТОРЕЖИМ: ожидание", bg=PANEL, fg=MUTED, font=("Segoe UI", 8, "bold"))
+        self.adaptive_label = tk.Label(self.monitor, text="АВТОРЕЖИМ: ожидание",
+                                       bg=PANEL, fg=MUTED,
+                                       font=("Segoe UI", 8, "bold"))
         self.adaptive_label.pack(anchor="w", padx=13, pady=(12, 2))
-        tk.Label(right, text="CPU указан в процентах одного ядра. При высокой нагрузке ПК приоритет Java автоматически снижается.",
-                 bg=PANEL, fg=MUTED, justify="left",
+        tk.Label(self.monitor,
+                 text="CPU — доля одного логического ядра. При высокой нагрузке ПК приоритет Java автоматически снижается.",
+                 bg=PANEL, fg=MUTED, justify="left", wraplength=185,
                  font=("Segoe UI", 8)).pack(anchor="w", padx=13, pady=12)
 
-        tk.Label(main_tab,
-                 text="Данные серверов хранятся отдельно",
-                 bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(pady=10)
+        self.tree = None
+        self.server_title = None
+        self.server_info = None
+        self.status = None
+        self.output = None
+        self.command = None
+        self.limit_label = None
+        self.current_section = "home"
+        self.show_home()
 
-        # About / author tab
-        about_card = tk.Frame(about_tab, bg=PANEL, padx=34, pady=30)
-        about_card.pack(fill="both", expand=True, padx=90, pady=55)
-        tk.Label(about_card, text="PRISTAL-PILOT", bg=PANEL, fg=FG,
+    def clear_content(self):
+        for child in self.content.winfo_children():
+            child.destroy()
+
+    def nav_button(self, label, command, active=False):
+        return tk.Button(
+            self.nav_area, text=label, command=command, anchor="w",
+            bg="#263754" if active else PANEL, fg=FG if active else MUTED,
+            activebackground="#263754", activeforeground=FG,
+            relief="flat", bd=0, padx=13, pady=12,
+            font=("Segoe UI", 10, "bold")
+        )
+
+    def show_home(self):
+        self.selected = None
+        self.current_section = "home"
+        for child in self.nav_area.winfo_children():
+            child.destroy()
+        self.nav_button("▦  Сервера", self.show_home, True).pack(fill="x", pady=3)
+        self.nav_button("ⓘ  О нас", self.show_about).pack(fill="x", pady=3)
+        for child in self.sidebar_footer.winfo_children():
+            child.destroy()
+        tk.Label(self.sidebar_footer, text=f"Версия {APP_VERSION}",
+                 bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w")
+        self.monitor.pack_forget()
+        self.monitor.pack(side="right", fill="y")
+        self.clear_content()
+
+        header = tk.Frame(self.content, bg=BG)
+        header.pack(fill="x", pady=(0, 18))
+        tk.Label(header, text="Мои сервера", bg=BG, fg=FG,
+                 font=("Segoe UI", 23, "bold")).pack(side="left")
+        tk.Button(header, text="↻ Проверить обновления",
+                  command=self.check_updates, bg="#202e46", fg="#b9cbff",
+                  relief="flat", padx=12, pady=9).pack(side="right")
+        tk.Label(self.content,
+                 text="Все созданные и добавленные серверы находятся здесь.",
+                 bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 14))
+
+        actions = tk.Frame(self.content, bg=BG)
+        actions.pack(fill="x", pady=(0, 12))
+        tk.Button(actions, text="+  Создать сервер",
+                  command=self.create_server_wizard, bg=BLUE, fg="white",
+                  relief="flat", padx=18, pady=11,
+                  font=("Segoe UI", 10, "bold")).pack(side="left", padx=(0, 8))
+        tk.Button(actions, text="Добавить существующий",
+                  command=self.add, bg="#263754", fg=FG,
+                  relief="flat", padx=16, pady=11).pack(side="left")
+        self.limit_label = tk.Label(actions, text="Одновременно: 0 / 3",
+                                    bg=BG, fg=MUTED, font=("Segoe UI", 9))
+        self.limit_label.pack(side="right")
+
+        list_card = tk.Frame(self.content, bg=PANEL, padx=10, pady=10)
+        list_card.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(list_card, show="tree", selectmode="browse")
+        self.tree.pack(fill="both", expand=True)
+        self.tree.bind("<<TreeviewSelect>>", self.choose)
+        self.refresh_servers()
+
+    def show_about(self):
+        self.current_section = "about"
+        self.clear_content()
+        card = tk.Frame(self.content, bg=PANEL, padx=30, pady=28)
+        card.pack(fill="both", expand=True)
+        tk.Label(card, text="PRISTAL-PILOT", bg=PANEL, fg=FG,
                  font=("Segoe UI", 25, "bold")).pack(anchor="w")
-        tk.Label(about_card, text="Разработано MrSkrenh", bg=PANEL, fg=FG,
+        tk.Label(card, text="Разработано MrSkrenh", bg=PANEL, fg=FG,
                  font=("Segoe UI", 15, "bold")).pack(anchor="w", pady=(22, 6))
-        tk.Label(about_card, text="Программа бесплатная.", bg=PANEL, fg=MUTED,
+        tk.Label(card, text="Программа бесплатная.", bg=PANEL, fg=MUTED,
                  font=("Segoe UI", 11)).pack(anchor="w", pady=(0, 22))
-
-        def open_author_link(url):
-            import webbrowser
-            webbrowser.open(url)
-
-        author_links = [
+        import webbrowser
+        for label, url in [
             ("Discord", "https://discord.gg/vywgQxyJt"),
             ("Twitch", "https://www.twitch.tv/skrenhtv"),
             ("YouTube", "https://www.youtube.com/@skrenh"),
-            ("Поддержать автора", "https://new.donatepay.ru/donate/1530153"),
-        ]
-        for label, url in author_links:
-            tk.Button(about_card, text=label, command=lambda link=url: open_author_link(link),
+            ("Поддержать автора", "https://new.donatepay.ru/donate/1530153")
+        ]:
+            tk.Button(card, text=label,
+                      command=lambda link=url: webbrowser.open(link),
                       bg=BLUE if label != "Поддержать автора" else GREEN,
-                      fg="white", activebackground="#5275e8", relief="flat",
-                      font=("Segoe UI", 10, "bold"), padx=18, pady=11,
-                      anchor="w").pack(fill="x", pady=5)
+                      fg="white", relief="flat", padx=18, pady=10,
+                      anchor="w").pack(fill="x", pady=4)
 
-        tk.Label(about_card, text="Спасибо, что используете Pristal-Pilot!",
-                 bg=PANEL, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(22, 0))
+    def show_server_page(self, section="console"):
+        profile = self.current()
+        if not profile:
+            self.show_home()
+            return
+        self.current_section = section
+        for child in self.nav_area.winfo_children():
+            child.destroy()
+        self.nav_button("←  Назад к серверам", self.show_home).pack(fill="x", pady=(0, 12))
+        tk.Label(self.nav_area, text=profile["name"], bg=PANEL, fg=FG,
+                 font=("Segoe UI", 11, "bold"), wraplength=185,
+                 justify="left").pack(anchor="w", padx=10, pady=(5, 12))
+        core = str(profile.get("core", "")).lower()
+        modded = any(x in core for x in ("fabric", "forge", "neoforge", "quilt"))
+        entries = [
+            ("▤  Консоль", "console"),
+            ("▧  Файлы", "files"),
+            ("◇  Моды" if modded else "◇  Плагины", "mods" if modded else "plugins"),
+            ("⚙  Настройки", "settings"),
+            ("♙  Игроки", "players"),
+            ("▶  Запуск", "startup")
+        ]
+        for label, key in entries:
+            self.nav_button(label, lambda s=key: self.show_server_page(s),
+                            section == key).pack(fill="x", pady=2)
+        for child in self.sidebar_footer.winfo_children():
+            child.destroy()
+        tk.Label(self.sidebar_footer, text=f"Одновременно: {sum(1 for p in self.items if self.running(p))} / 3",
+                 bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w")
+
+        self.clear_content()
+        header = tk.Frame(self.content, bg=BG)
+        header.pack(fill="x", pady=(0, 14))
+        self.server_title = tk.Label(header, text=profile["name"], bg=BG, fg=FG,
+                                     font=("Segoe UI", 21, "bold"))
+        self.server_title.pack(side="left")
+        self.status = tk.Label(header,
+                               text="● РАБОТАЕТ" if self.running(profile) else "● ОСТАНОВЛЕН",
+                               bg=BG, fg=GREEN if self.running(profile) else "#e3a4ad",
+                               font=("Segoe UI", 9, "bold"))
+        self.status.pack(side="right")
+        self.server_info = tk.Label(self.content,
+            text=f'{profile["folder"]}  •  {profile.get("core", "Не указано")}  •  Minecraft {profile.get("version", "—")}',
+            bg=BG, fg=MUTED, font=("Segoe UI", 9))
+        self.server_info.pack(anchor="w", pady=(0, 12))
+
+        if section == "console":
+            self.render_console()
+        elif section == "files":
+            self.render_files()
+        elif section == "settings":
+            self.render_settings_entry()
+        elif section == "players":
+            self.render_players_entry()
+        elif section == "startup":
+            self.render_startup_entry()
+        elif section in ("plugins", "mods"):
+            self.render_catalog_entry(section)
+
+    def render_console(self):
+        profile = self.current()
+        controls = tk.Frame(self.content, bg=BG)
+        controls.pack(fill="x", pady=(0, 12))
+        for label, color, action in [
+            ("▶ Включить", GREEN, self.start),
+            ("↻ Перезапустить", "#465a7b", self.restart),
+            ("■ Выключить", RED, self.stop)
+        ]:
+            tk.Button(controls, text=label, command=action, bg=color,
+                      fg="white", relief="flat", padx=13, pady=9,
+                      font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 7))
+        console_head = tk.Frame(self.content, bg=PANEL, padx=12, pady=9)
+        console_head.pack(fill="x")
+        tk.Label(console_head, text="КОНСОЛЬ СЕРВЕРА", bg=PANEL,
+                 fg=MUTED, font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        self.output = tk.Text(self.content, bg="#080c12", fg="#c8d6e9",
+                              insertbackground=FG, font=("Consolas", 9),
+                              state="disabled", relief="flat", wrap="word")
+        self.output.pack(fill="both", expand=True, pady=(0, 8))
+        command_row = tk.Frame(self.content, bg=BG)
+        command_row.pack(fill="x")
+        self.command = tk.Entry(command_row, bg=PANEL, fg=FG,
+                                insertbackground=FG, relief="flat",
+                                font=("Consolas", 10))
+        self.command.pack(side="left", fill="x", expand=True, ipady=10)
+        self.command.bind("<Return>", lambda _event: self.send())
+        tk.Button(command_row, text="Отправить", command=self.send,
+                  bg=BLUE, fg="white", relief="flat", padx=15, pady=8).pack(side="right", padx=(8, 0))
+        # Показываем последние строки выбранного сервера при возврате к консоли.
+        for line in self.metrics.get(profile["id"], {}).get("recent", []):
+            self.log(line)
+
+    def render_files(self):
+        profile = self.current()
+        card = tk.Frame(self.content, bg=PANEL, padx=22, pady=22)
+        card.pack(fill="both", expand=True)
+        tk.Label(card, text="ФАЙЛЫ СЕРВЕРА", bg=PANEL, fg=FG,
+                 font=("Segoe UI", 17, "bold")).pack(anchor="w")
+        tk.Label(card, text="Открой папку этого сервера в Проводнике. Внутри будут миры, конфигурации, плагины и моды.",
+                 bg=PANEL, fg=MUTED, wraplength=620, justify="left").pack(anchor="w", pady=12)
+        tk.Button(card, text="Открыть папку сервера",
+                  command=self.open_server_files, bg=BLUE, fg="white",
+                  relief="flat", padx=18, pady=11).pack(anchor="w")
+        tk.Label(card, text=profile["folder"], bg=PANEL, fg=MUTED,
+                 wraplength=650).pack(anchor="w", pady=(16, 0))
+
+    def render_settings_entry(self):
+        card = tk.Frame(self.content, bg=PANEL, padx=22, pady=22)
+        card.pack(fill="both", expand=True)
+        tk.Label(card, text="Настройки сервера", bg=PANEL, fg=FG,
+                 font=("Segoe UI", 17, "bold")).pack(anchor="w")
+        tk.Label(card, text="Открыть редактор основных параметров профиля. Редактор server.properties и поиск по настройкам будут добавлены следующим этапом.",
+                 bg=PANEL, fg=MUTED, wraplength=620, justify="left").pack(anchor="w", pady=12)
+        tk.Button(card, text="Изменить параметры профиля", command=self.edit,
+                  bg=BLUE, fg="white", relief="flat", padx=16, pady=10).pack(anchor="w")
+
+    def render_players_entry(self):
+        card = tk.Frame(self.content, bg=PANEL, padx=22, pady=22)
+        card.pack(fill="both", expand=True)
+        tk.Label(card, text="Управление игроками", bg=PANEL, fg=FG,
+                 font=("Segoe UI", 17, "bold")).pack(anchor="w")
+        tk.Label(card, text="Команды доступны через консоль сервера: op, deop, kick, ban, pardon, ban-ip и pardon-ip.",
+                 bg=PANEL, fg=MUTED, wraplength=620, justify="left").pack(anchor="w", pady=12)
+        tk.Button(card, text="Открыть консоль", command=lambda: self.show_server_page("console"),
+                  bg=BLUE, fg="white", relief="flat", padx=16, pady=10).pack(anchor="w")
+
+    def render_startup_entry(self):
+        profile = self.current()
+        card = tk.Frame(self.content, bg=PANEL, padx=22, pady=22)
+        card.pack(fill="both", expand=True)
+        tk.Label(card, text="Параметры запуска", bg=PANEL, fg=FG,
+                 font=("Segoe UI", 17, "bold")).pack(anchor="w")
+        summary = f'Java: {profile.get("java", "java")}\\nRAM: {profile.get("minimum", "1")}–{profile.get("ram", "4")} GiB\\nJAR: {profile.get("jar", "server.jar")}'
+        tk.Label(card, text=summary, bg=PANEL, fg=MUTED,
+                 justify="left", font=("Consolas", 10)).pack(anchor="w", pady=12)
+        tk.Button(card, text="Изменить параметры запуска",
+                  command=self.edit, bg=BLUE, fg="white",
+                  relief="flat", padx=16, pady=10).pack(anchor="w")
+
+    def render_catalog_entry(self, section):
+        card = tk.Frame(self.content, bg=PANEL, padx=22, pady=22)
+        card.pack(fill="both", expand=True)
+        title = "Каталог модов" if section == "mods" else "Каталог плагинов"
+        tk.Label(card, text=title, bg=PANEL, fg=FG,
+                 font=("Segoe UI", 17, "bold")).pack(anchor="w")
+        tk.Label(card, text="Поиск и установка проектов из Modrinth будут подключены следующим этапом. Совместимость будет проверяться по ядру и версии Minecraft.",
+                 bg=PANEL, fg=MUTED, wraplength=620, justify="left").pack(anchor="w", pady=12)
 
     def log(self, text):
         self.output.configure(state="normal")
@@ -241,6 +377,8 @@ class App:
         self.output.configure(state="disabled")
 
     def refresh_servers(self):
+        if not self.tree or not self.tree.winfo_exists():
+            return
         self.tree.delete(*self.tree.get_children())
         active = 0
         for i, profile in enumerate(self.items):
@@ -249,22 +387,17 @@ class App:
             prefix = "●  " if is_running else "○  "
             self.tree.insert("", "end", iid=str(i), text=prefix + profile["name"])
         self.limit_label.config(text=f"Одновременно: {active} / 3")
-        if self.selected is not None and self.selected < len(self.items):
+        if self.tree and self.selected is not None and self.selected < len(self.items):
             self.tree.selection_set(str(self.selected))
 
     def choose(self, _event=None):
+        if not self.tree:
+            return
         selected = self.tree.selection()
         if not selected:
             return
         self.selected = int(selected[0])
-        profile = self.current()
-        self.server_title.config(text=profile["name"])
-        self.server_info.config(
-            text=f'{profile["folder"]}   •   Java {profile["java"]}   •   RAM {profile["minimum"]}-{profile["ram"]} GB'
-        )
-        self.status.config(text="● РАБОТАЕТ" if self.running(profile) else "● ОСТАНОВЛЕН",
-                           fg=GREEN if self.running(profile) else "#e3a4ad")
-        self.log(f'Выбран сервер: {profile["name"]}')
+        self.show_server_page("console")
 
     def open_server_files(self):
         profile = self.current()
@@ -459,7 +592,8 @@ class App:
             threading.Thread(target=self.reader, args=(profile["id"], proc), daemon=True).start()
             self.log("Запуск сервера…")
             self.refresh_servers()
-            self.status.config(text="● РАБОТАЕТ", fg=GREEN)
+            if self.status and self.status.winfo_exists():
+                self.status.config(text="● РАБОТАЕТ", fg=GREEN)
         except (OSError, ValueError) as error:
             messagebox.showerror("Ошибка запуска", str(error))
 
@@ -479,8 +613,11 @@ class App:
                     stats["tps"] = tps_match.group(1)
                 if player_match:
                     stats["players"] = player_match.group(1)
+                stats.setdefault("recent", []).append(line)
+                stats["recent"] = stats["recent"][-300:]
                 if self.current() and self.current()["id"] == profile_id:
-                    self.log(line)
+                    if self.output and self.output.winfo_exists():
+                        self.log(line)
                     self.tps_value.config(text=stats["tps"])
                     self.players_value.config(text=stats["players"])
                 self.refresh_servers()
