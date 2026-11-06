@@ -173,7 +173,7 @@ class App:
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=13, pady=(16, 12))
         self.ram_card, self.ram_value = self.card(right, "RAM процесса")
         self.ram_card.pack(fill="x", padx=10, pady=5)
-        self.cpu_card, self.cpu_value = self.card(right, "CPU процесса")
+        self.cpu_card, self.cpu_value = self.card(right, "CPU · % одного ядра")
         self.cpu_card.pack(fill="x", padx=10, pady=5)
         self.tps_card, self.tps_value = self.card(right, "TPS")
         self.tps_card.pack(fill="x", padx=10, pady=5)
@@ -432,6 +432,27 @@ class App:
         self.start()
 
     def update_metrics(self):
+        host_load = psutil.cpu_percent(interval=None) if psutil else 0.0
+        if psutil:
+            for item in self.items:
+                if not self.running(item):
+                    continue
+                try:
+                    process = psutil.Process(self.processes[item["id"]].pid)
+                    state = self.adaptive_state.get(item["id"], "normal")
+                    if host_load >= 85 and state != "reduced":
+                        process.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 10)
+                        self.adaptive_state[item["id"]] = "reduced"
+                        if self.current() and self.current()["id"] == item["id"]:
+                            self.log("Высокая нагрузка ПК: приоритет Java снижен.")
+                    elif host_load <= 70 and state == "reduced":
+                        process.nice(psutil.NORMAL_PRIORITY_CLASS if os.name == "nt" else 0)
+                        self.adaptive_state[item["id"]] = "normal"
+                        if self.current() and self.current()["id"] == item["id"]:
+                            self.log("Нагрузка ПК снизилась: приоритет Java восстановлен.")
+                except (psutil.Error, OSError):
+                    pass
+
         profile = self.current()
         if profile and self.running(profile):
             proc = self.processes[profile["id"]]
@@ -442,19 +463,9 @@ class App:
                     cpu = process.cpu_percent(interval=None)
                     self.ram_value.config(text=f"{memory:.2f} GB")
                     self.cpu_value.config(text=f"{cpu:.1f}% ядра")
-                    host_load = psutil.cpu_percent(interval=None)
-                    state = self.adaptive_state.get(profile["id"], "normal")
-                    if host_load >= 85 and state != "reduced":
-                        process.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 10)
-                        self.adaptive_state[profile["id"]] = "reduced"
+                    if self.adaptive_state.get(profile["id"]) == "reduced":
                         self.adaptive_label.config(text=f"ЩАДЯЩИЙ РЕЖИМ: ПК {host_load:.0f}%", fg="#e3b66b")
-                        self.log("Высокая нагрузка ПК: приоритет Java снижен.")
-                    elif host_load <= 70 and state == "reduced":
-                        process.nice(psutil.NORMAL_PRIORITY_CLASS if os.name == "nt" else 0)
-                        self.adaptive_state[profile["id"]] = "normal"
-                        self.adaptive_label.config(text="АВТОРЕЖИМ: обычный", fg=GREEN)
-                        self.log("Нагрузка ПК снизилась: приоритет Java восстановлен.")
-                    elif state != "reduced":
+                    else:
                         self.adaptive_label.config(text=f"АВТОРЕЖИМ: обычный · ПК {host_load:.0f}%", fg=GREEN)
                 except (psutil.Error, OSError):
                     self.ram_value.config(text="—")
@@ -473,8 +484,6 @@ class App:
             self.adaptive_label.config(text="АВТОРЕЖИМ: ожидание", fg=MUTED)
         self.root.after(1000, self.update_metrics)
 
-
-
     def create_server_wizard(self):
         win = tk.Toplevel(self.root)
         win.title("Создать Minecraft-сервер")
@@ -482,7 +491,7 @@ class App:
         win.resizable(False, False)
         fields = {}
         rows = [("Название", "name", "Мой сервер"), ("Ядро", "core", "Paper"),
-                ("Версия Minecraft", "version", "1.21.4"), ("Java", "java", "java"),
+                ("Версия Minecraft", "version", "1.21.4"), ("Java (команда или путь)", "java", "java"),
                 ("RAM максимум, GB", "ram", "4"), ("RAM минимум, GB", "minimum", "1"),
                 ("Порт", "port", "25565")]
         tk.Label(win, text="СОЗДАНИЕ СЕРВЕРА", bg=PANEL, fg=FG,
