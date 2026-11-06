@@ -9,6 +9,7 @@ import subprocess
 import threading
 import sys
 import time
+import socket
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -21,7 +22,7 @@ except ImportError:
 DATA = Path(os.getenv("APPDATA", str(Path.home()))) / "Pristal-Pilot"
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
 BG, PANEL, PANEL2 = "#0d1119", "#151d2a", "#1c2737"
 FG, MUTED, BLUE, GREEN, RED = "#edf2fa", "#94a3b8", "#6488ff", "#35c58a", "#b94d60"
@@ -34,6 +35,7 @@ class App:
         self.queue = queue.Queue()
         self.selected = None
         self.metrics = {}
+        self.adaptive_state = {}
         try:
             self.items = json.loads(DB.read_text(encoding="utf-8"))
         except Exception:
@@ -76,6 +78,9 @@ class App:
                         foreground=FG, rowheight=38, borderwidth=0)
         style.map("Treeview", background=[("selected", "#2b3d5b")],
                   foreground=[("selected", FG)])
+        style.configure("TNotebook", background=BG, borderwidth=0)
+        style.configure("TNotebook.Tab", background=PANEL, foreground=FG, padding=(18, 10), font=("Segoe UI", 9, "bold"))
+        style.map("TNotebook.Tab", background=[("selected", "#263754")])
 
         # Main application tabs
         tabs = ttk.Notebook(self.root)
@@ -91,6 +96,7 @@ class App:
                  font=("Segoe UI", 23, "bold")).pack(side="left")
         tk.Label(header, text="by MrSkrenh  /  MINECRAFT SERVER CONTROL",
                  bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(side="left", padx=16, pady=11)
+        tk.Button(header, text="IP и доступ", command=self.show_network_info, bg="#263754", fg=FG, relief="flat", padx=12, pady=8).pack(side="right", padx=(0, 8))
         tk.Button(header, text="↻  Проверить обновления", command=self.check_updates,
                   bg="#202e46", fg="#b9cbff", activebackground="#2b3d5b",
                   relief="flat", font=("Segoe UI", 9, "bold"), padx=12, pady=8).pack(side="right")
@@ -109,7 +115,8 @@ class App:
         self.tree = ttk.Treeview(left, show="tree", selectmode="browse")
         self.tree.pack(fill="both", expand=True, padx=8)
         self.tree.bind("<<TreeviewSelect>>", self.choose)
-        tk.Button(left, text="+  Добавить сервер", command=self.add,
+        tk.Button(left, text="+  Создать сервер", command=self.create_server_wizard, bg=BLUE, fg="white", relief="flat", font=("Segoe UI", 9, "bold"), pady=11).pack(fill="x", padx=10, pady=(12, 5))
+        tk.Button(left, text="Добавить существующий", command=self.add,
                   bg=BLUE, fg="white", activebackground="#5275e8",
                   relief="flat", font=("Segoe UI", 9, "bold"), pady=11).pack(fill="x", padx=10, pady=12)
         self.limit_label = tk.Label(left, text="Одновременно: 0 / 3",
@@ -172,7 +179,9 @@ class App:
         self.tps_card.pack(fill="x", padx=10, pady=5)
         self.players_card, self.players_value = self.card(right, "Игроки")
         self.players_card.pack(fill="x", padx=10, pady=5)
-        tk.Label(right, text="TPS и игроки появятся\nпосле получения данных\nот сервера.",
+        self.adaptive_label = tk.Label(right, text="АВТОРЕЖИМ: ожидание", bg=PANEL, fg=MUTED, font=("Segoe UI", 8, "bold"))
+        self.adaptive_label.pack(anchor="w", padx=13, pady=(12, 2))
+        tk.Label(right, text="CPU указан в процентах одного ядра. При высокой нагрузке ПК приоритет Java автоматически снижается.",
                  bg=PANEL, fg=MUTED, justify="left",
                  font=("Segoe UI", 8)).pack(anchor="w", padx=13, pady=12)
 
@@ -432,7 +441,21 @@ class App:
                     memory = process.memory_info().rss / (1024 ** 3)
                     cpu = process.cpu_percent(interval=None)
                     self.ram_value.config(text=f"{memory:.2f} GB")
-                    self.cpu_value.config(text=f"{cpu:.1f}%")
+                    self.cpu_value.config(text=f"{cpu:.1f}% ядра")
+                    host_load = psutil.cpu_percent(interval=None)
+                    state = self.adaptive_state.get(profile["id"], "normal")
+                    if host_load >= 85 and state != "reduced":
+                        process.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 10)
+                        self.adaptive_state[profile["id"]] = "reduced"
+                        self.adaptive_label.config(text=f"ЩАДЯЩИЙ РЕЖИМ: ПК {host_load:.0f}%", fg="#e3b66b")
+                        self.log("Высокая нагрузка ПК: приоритет Java снижен.")
+                    elif host_load <= 70 and state == "reduced":
+                        process.nice(psutil.NORMAL_PRIORITY_CLASS if os.name == "nt" else 0)
+                        self.adaptive_state[profile["id"]] = "normal"
+                        self.adaptive_label.config(text="АВТОРЕЖИМ: обычный", fg=GREEN)
+                        self.log("Нагрузка ПК снизилась: приоритет Java восстановлен.")
+                    elif state != "reduced":
+                        self.adaptive_label.config(text=f"АВТОРЕЖИМ: обычный · ПК {host_load:.0f}%", fg=GREEN)
                 except (psutil.Error, OSError):
                     self.ram_value.config(text="—")
                     self.cpu_value.config(text="—")
@@ -447,8 +470,138 @@ class App:
             self.cpu_value.config(text="—")
             self.tps_value.config(text="—")
             self.players_value.config(text="—")
+            self.adaptive_label.config(text="АВТОРЕЖИМ: ожидание", fg=MUTED)
         self.root.after(1000, self.update_metrics)
 
+
+
+    def create_server_wizard(self):
+        win = tk.Toplevel(self.root)
+        win.title("Создать Minecraft-сервер")
+        win.configure(bg=PANEL)
+        win.resizable(False, False)
+        fields = {}
+        rows = [("Название", "name", "Мой сервер"), ("Ядро", "core", "Paper"),
+                ("Версия Minecraft", "version", "1.21.4"), ("Java", "java", "java"),
+                ("RAM максимум, GB", "ram", "4"), ("RAM минимум, GB", "minimum", "1"),
+                ("Порт", "port", "25565")]
+        tk.Label(win, text="СОЗДАНИЕ СЕРВЕРА", bg=PANEL, fg=FG,
+                 font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, padx=18, pady=14, sticky="w")
+        for row, (label, key, default) in enumerate(rows, start=1):
+            tk.Label(win, text=label, bg=PANEL, fg=MUTED).grid(row=row, column=0, padx=18, pady=7, sticky="w")
+            if key == "core":
+                widget = ttk.Combobox(win, values=["Paper", "Purpur", "Vanilla"], state="readonly", width=28)
+                widget.set(default)
+            else:
+                widget = tk.Entry(win, width=31, bg=BG, fg=FG, insertbackground=FG, relief="flat")
+                widget.insert(0, default)
+            widget.grid(row=row, column=1, padx=18, pady=7, ipady=5)
+            fields[key] = widget
+        folder_var = tk.StringVar(value=str(Path.home() / "Pristal-Pilot-Servers" / "my-server"))
+        tk.Label(win, text="Папка", bg=PANEL, fg=MUTED).grid(row=8, column=0, padx=18, pady=7, sticky="w")
+        tk.Entry(win, textvariable=folder_var, width=31, bg=BG, fg=FG, insertbackground=FG, relief="flat").grid(row=8, column=1, padx=18, pady=7, ipady=5)
+        def browse():
+            chosen = filedialog.askdirectory()
+            if chosen:
+                folder_var.set(chosen)
+        tk.Button(win, text="Выбрать папку…", command=browse, bg="#303e53", fg=FG, relief="flat").grid(row=9, column=1, padx=18, pady=5, sticky="e")
+        tk.Label(win, text="Встроенная загрузка доступна для Paper, Purpur и Vanilla.",
+                 bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).grid(row=10, column=0, columnspan=2, padx=18, pady=8, sticky="w")
+        def submit():
+            try:
+                name, core, version = fields["name"].get().strip(), fields["core"].get(), fields["version"].get().strip()
+                java = fields["java"].get().strip() or "java"
+                low, high, port = float(fields["minimum"].get()), float(fields["ram"].get()), int(fields["port"].get())
+                folder = Path(folder_var.get()).expanduser()
+                if not name or not version or low <= 0 or high < low or not 1 <= port <= 65535:
+                    raise ValueError
+                if folder.exists() and any(folder.iterdir()):
+                    messagebox.showerror("Папка занята", "Выберите пустую папку, чтобы не затронуть существующие файлы.", parent=win)
+                    return
+            except Exception:
+                messagebox.showerror("Параметры", "Проверьте название, версию, RAM и порт (1–65535).", parent=win)
+                return
+            win.destroy()
+            threading.Thread(target=self._download_new_server, args=(name, core, version, java, str(folder), str(low), str(high), port), daemon=True).start()
+            self.log("Загружаем ядро и создаём сервер…")
+        tk.Button(win, text="Скачать ядро и создать", command=submit, bg=BLUE, fg="white",
+                  relief="flat", font=("Segoe UI", 10, "bold"), padx=15, pady=10).grid(row=11, column=0, columnspan=2, padx=18, pady=16, sticky="ew")
+
+    def _download_new_server(self, name, core, version, java, folder, minimum, ram, port):
+        try:
+            import shutil
+            import urllib.parse
+            target = Path(folder)
+            target.mkdir(parents=True, exist_ok=True)
+            headers = {"User-Agent": "Pristal-Pilot"}
+            if core == "Paper":
+                api = f"https://api.papermc.io/v2/projects/paper/versions/{urllib.parse.quote(version)}/builds"
+                with urllib.request.urlopen(urllib.request.Request(api, headers=headers), timeout=30) as response:
+                    builds = json.loads(response.read().decode("utf-8")).get("builds", [])
+                if not builds:
+                    raise RuntimeError("Paper: сборки для этой версии не найдены.")
+                build = builds[-1]
+                jar = build["downloads"]["application"]["name"]
+                url = f"https://api.papermc.io/v2/projects/paper/versions/{version}/builds/{build['build']}/downloads/{jar}"
+            elif core == "Purpur":
+                url = f"https://api.purpurmc.org/v2/purpur/{urllib.parse.quote(version)}/latest/download"
+            else:
+                with urllib.request.urlopen("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json", timeout=30) as response:
+                    manifest = json.loads(response.read().decode("utf-8"))
+                item = next((entry for entry in manifest["versions"] if entry["id"] == version), None)
+                if not item:
+                    raise RuntimeError("Версия Vanilla не найдена в официальном списке Mojang.")
+                with urllib.request.urlopen(item["url"], timeout=30) as response:
+                    metadata = json.loads(response.read().decode("utf-8"))
+                url = metadata["downloads"]["server"]["url"]
+            request = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(request, timeout=180) as response, (target / "server.jar").open("wb") as output:
+                shutil.copyfileobj(response, output)
+            (target / "eula.txt").write_text("eula=false\n", encoding="utf-8")
+            (target / "server.properties").write_text(f"server-port={port}\n", encoding="utf-8")
+            profile = {"id": os.urandom(8).hex(), "name": name, "folder": str(target), "jar": "server.jar",
+                       "java": java, "ram": ram, "minimum": minimum, "port": str(port), "core": core, "version": version}
+            def done():
+                self.items.append(profile)
+                self.selected = len(self.items) - 1
+                self.save()
+                self.refresh_servers()
+                self.choose()
+                self.log(f"{core} {version} создан. Перед запуском проверьте EULA.")
+                messagebox.showinfo("Сервер создан", "Ядро загружено. Откройте eula.txt и установите eula=true, если принимаете лицензионное соглашение Minecraft.")
+            self.root.after(0, done)
+        except Exception as error:
+            self.root.after(0, lambda err=str(error): messagebox.showerror("Ошибка создания сервера", err))
+
+    def show_network_info(self):
+        profile = self.current()
+        if not profile:
+            messagebox.showinfo("IP сервера", "Сначала выберите профиль сервера.")
+            return
+        port = int(profile.get("port", 25565))
+        try:
+            local_ip = socket.gethostbyname(socket.gethostname())
+        except OSError:
+            local_ip = "не определён"
+        win = tk.Toplevel(self.root)
+        win.title("IP и внешний доступ")
+        win.configure(bg=PANEL)
+        tk.Label(win, text=f"Сервер: {profile['name']}", bg=PANEL, fg=FG,
+                 font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=22, pady=(20, 8))
+        tk.Label(win, text=f"Локальный адрес: {local_ip}:{port}", bg=PANEL, fg=FG).pack(anchor="w", padx=22, pady=8)
+        public = tk.Label(win, text="Внешний IP: определяем…", bg=PANEL, fg=FG)
+        public.pack(anchor="w", padx=22, pady=8)
+        tk.Label(win, text="Для подключения из интернета настройте проброс TCP-порта на роутере либо используйте туннель (например, Playit) или VPS. Показ внешнего IP не означает, что порт открыт.",
+                 bg=PANEL, fg=MUTED, wraplength=440, justify="left").pack(anchor="w", padx=22, pady=12)
+        def fetch():
+            try:
+                request = urllib.request.Request("https://api.ipify.org", headers={"User-Agent": "Pristal-Pilot"})
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    address = response.read().decode("ascii").strip()
+                self.root.after(0, lambda: public.config(text=f"Внешний IP: {address}:{port}"))
+            except Exception:
+                self.root.after(0, lambda: public.config(text="Внешний IP: не удалось определить"))
+        threading.Thread(target=fetch, daemon=True).start()
 
     def check_updates(self):
         self.log("Проверяем обновления на GitHub…")
