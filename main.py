@@ -110,6 +110,26 @@ class App:
         self.monitor.pack_propagate(False)
         tk.Label(self.monitor, text="МОНИТОРИНГ", bg=PANEL, fg=MUTED,
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=14, pady=(20, 14))
+        self.ip_card = tk.Frame(self.monitor, bg=PANEL2, padx=10, pady=10)
+        self.ip_card.pack(fill="x", padx=10, pady=(0, 7))
+        tk.Label(self.ip_card, text="АДРЕС СЕРВЕРА", bg=PANEL2, fg=MUTED,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        self.local_ip_value = tk.Label(self.ip_card, text="Локальный: выберите сервер",
+                                        bg=PANEL2, fg=FG, justify="left",
+                                        wraplength=180, font=("Segoe UI", 9, "bold"))
+        self.local_ip_value.pack(anchor="w", pady=(7, 2))
+        self.local_ip_copy = tk.Button(self.ip_card, text="Копировать локальный",
+                                        state="disabled", bg="#303e53", fg=FG,
+                                        relief="flat", padx=7, pady=4)
+        self.local_ip_copy.pack(anchor="w", pady=(0, 6))
+        self.public_ip_value = tk.Label(self.ip_card, text="Внешний: —",
+                                        bg=PANEL2, fg=FG, justify="left",
+                                        wraplength=180, font=("Segoe UI", 9, "bold"))
+        self.public_ip_value.pack(anchor="w", pady=(0, 2))
+        self.public_ip_copy = tk.Button(self.ip_card, text="Копировать внешний",
+                                        state="disabled", bg="#303e53", fg=FG,
+                                        relief="flat", padx=7, pady=4)
+        self.public_ip_copy.pack(anchor="w")
         self.ram_card, self.ram_value = self.card(self.monitor, "RAM процесса")
         self.ram_card.pack(fill="x", padx=10, pady=5)
         self.cpu_card, self.cpu_value = self.card(self.monitor, "CPU · % одного ядра")
@@ -229,6 +249,7 @@ class App:
             return
         self.current_section = section
         self.refresh_disk_usage(profile)
+        self.refresh_ip_info(profile)
         for child in self.nav_area.winfo_children():
             child.destroy()
         self.nav_button("←  Назад к серверам", self.show_home).pack(fill="x", pady=(0, 12))
@@ -924,6 +945,75 @@ class App:
             self.root.after(0, done)
         except Exception as error:
             self.root.after(0, lambda err=str(error): messagebox.showerror("Ошибка создания сервера", err))
+
+    def copy_text(self, value, label="Адрес"):
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["clip"], input=value + "\n", text=True, check=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                )
+            else:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(value)
+                self.root.update()
+            messagebox.showinfo("Скопировано", f"{label} скопирован в буфер обмена.")
+        except Exception as exc:
+            messagebox.showerror("Ошибка копирования",
+                                 f"Не удалось скопировать адрес: {exc}\n\n{value}")
+
+    def refresh_ip_info(self, profile):
+        if not hasattr(self, "local_ip_value"):
+            return
+        profile_id = profile.get("id")
+        port = int(profile.get("port", 25565))
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            probe.connect(("8.8.8.8", 80))
+            local_ip = probe.getsockname()[0]
+            probe.close()
+        except OSError:
+            try:
+                local_ip = socket.gethostbyname(socket.gethostname())
+            except OSError:
+                local_ip = "не определён"
+        local_address = f"{local_ip}:{port}"
+        self.local_ip_value.config(text=f"Локальный: {local_address}")
+        self.local_ip_copy.config(
+            state="normal",
+            command=lambda value=local_address: self.copy_text(value, "Локальный IP")
+        )
+        self.public_ip_value.config(text="Внешний: определяем…")
+        self.public_ip_copy.config(state="disabled", command=lambda: None)
+
+        def fetch_public():
+            try:
+                request = urllib.request.Request(
+                    "https://api.ipify.org",
+                    headers={"User-Agent": "Pristal-Pilot"}
+                )
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    address = response.read().decode("ascii").strip()
+                full_address = f"{address}:{port}"
+
+                def update():
+                    current = self.current()
+                    if not current or current.get("id") != profile_id:
+                        return
+                    self.public_ip_value.config(text=f"Внешний: {full_address}")
+                    self.public_ip_copy.config(
+                        state="normal",
+                        command=lambda value=full_address: self.copy_text(value, "Внешний IP")
+                    )
+                self.root.after(0, update)
+            except Exception:
+                def failed():
+                    current = self.current()
+                    if current and current.get("id") == profile_id:
+                        self.public_ip_value.config(text="Внешний: не удалось определить")
+                self.root.after(0, failed)
+
+        threading.Thread(target=fetch_public, daemon=True).start()
 
     def show_network_info(self):
         profile = self.current()
