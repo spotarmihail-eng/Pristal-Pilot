@@ -354,7 +354,7 @@ class App:
         card.pack(fill="both", expand=True)
         tk.Label(card, text="Параметры запуска", bg=PANEL, fg=FG,
                  font=("Segoe UI", 17, "bold")).pack(anchor="w")
-        summary = f'Java: {profile.get("java", "java")}\\nRAM: {profile.get("minimum", "1")}–{profile.get("ram", "4")} GiB\\nJAR: {profile.get("jar", "server.jar")}'
+        summary = f'Java: {profile.get("java", "java")}\nRAM: {profile.get("minimum", "1")}–{profile.get("ram", "4")} GiB\nJAR: {profile.get("jar", "server.jar")}'
         tk.Label(card, text=summary, bg=PANEL, fg=MUTED,
                  justify="left", font=("Consolas", 10)).pack(anchor="w", pady=12)
         tk.Button(card, text="Изменить параметры запуска",
@@ -377,9 +377,12 @@ class App:
         self.output.configure(state="disabled")
 
     def refresh_servers(self):
-        if not self.tree or not self.tree.winfo_exists():
+        try:
+            if not self.tree or not self.tree.winfo_exists():
+                return
+            self.tree.delete(*self.tree.get_children())
+        except tk.TclError:
             return
-        self.tree.delete(*self.tree.get_children())
         active = 0
         for i, profile in enumerate(self.items):
             is_running = self.running(profile)
@@ -391,9 +394,12 @@ class App:
             self.tree.selection_set(str(self.selected))
 
     def choose(self, _event=None):
-        if not self.tree:
+        try:
+            if not self.tree or not self.tree.winfo_exists():
+                return
+            selected = self.tree.selection()
+        except tk.TclError:
             return
-        selected = self.tree.selection()
         if not selected:
             return
         self.selected = int(selected[0])
