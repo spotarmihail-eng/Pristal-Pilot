@@ -22,7 +22,7 @@ except ImportError:
 DATA = Path(os.getenv("APPDATA", str(Path.home()))) / "Pristal-Pilot"
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.6.1"
 GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
 BG, PANEL, PANEL2 = "#0d1119", "#151d2a", "#1c2737"
 FG, MUTED, BLUE, GREEN, RED = "#edf2fa", "#94a3b8", "#6488ff", "#35c58a", "#b94d60"
@@ -775,10 +775,26 @@ class App:
         local_row.pack(fill="x", padx=22, pady=8)
         tk.Label(local_row, text=f"Локальный адрес: {local_address}", bg=PANEL, fg=FG).pack(side="left")
         def copy_address(value, label):
-            self.root.clipboard_clear()
-            self.root.clipboard_append(value)
-            self.root.update()
-            messagebox.showinfo("IP скопирован", f"{label} скопирован в буфер обмена.", parent=win)
+            try:
+                if os.name == "nt":
+                    subprocess.run(
+                        ["clip"],
+                        input=value + "\\n",
+                        text=True,
+                        check=True,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    )
+                else:
+                    win.clipboard_clear()
+                    win.clipboard_append(value)
+                    win.update()
+                messagebox.showinfo("IP скопирован", f"{label} скопирован в буфер обмена.", parent=win)
+            except Exception as exc:
+                messagebox.showerror(
+                    "Не удалось скопировать IP",
+                    f"Не получилось записать адрес в буфер обмена.\n\nАдрес: {value}\nОшибка: {exc}",
+                    parent=win
+                )
         tk.Button(local_row, text="Копировать", command=lambda: copy_address(local_address, "Локальный адрес"),
                   bg="#303e53", fg=FG, relief="flat", padx=10, pady=5).pack(side="right")
         public_row = tk.Frame(win, bg=PANEL)
