@@ -324,7 +324,7 @@ class App:
                 return
             try:
                 eula_path = Path(profile["folder"]) / "eula.txt"
-                eula_path.write_text("# Minecraft EULA accepted in Pristal-Pilot\\neula=true\\n",
+                eula_path.write_text("# Minecraft EULA accepted in Pristal-Pilot\neula=true\n",
                                      encoding="utf-8")
                 profile["eula_accepted"] = True
                 self.save()
@@ -332,7 +332,7 @@ class App:
                 window.destroy()
                 self.log("EULA принята для сервера " + profile["name"] + ".")
             except OSError as error:
-                messagebox.showerror("EULA", f"Не удалось сохранить принятие EULA:\\n{error}", parent=window)
+                messagebox.showerror("EULA", f"Не удалось сохранить принятие EULA:\n{error}", parent=window)
 
         buttons = tk.Frame(window, bg=PANEL)
         buttons.pack(fill="x", padx=22, pady=(12, 20))
@@ -416,7 +416,7 @@ class App:
             eula_text = eula_path.read_text(encoding="utf-8", errors="replace") if eula_path.is_file() else ""
         except OSError:
             eula_text = ""
-        if not re.search(r"(?im)^\\s*eula\\s*=\\s*true\\s*$", eula_text):
+        if not re.search(r"(?im)^\s*eula\s*=\s*true\s*$", eula_text):
             profile["eula_accepted"] = False
             self.show_eula_dialog(profile)
             return
