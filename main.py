@@ -22,7 +22,7 @@ except ImportError:
 DATA = Path(os.getenv("APPDATA", str(Path.home()))) / "Pristal-Pilot"
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
 BG, PANEL, PANEL2 = "#0d1119", "#151d2a", "#1c2737"
 FG, MUTED, BLUE, GREEN, RED = "#edf2fa", "#94a3b8", "#6488ff", "#35c58a", "#b94d60"
@@ -334,9 +334,13 @@ class App:
             low, high = int(float(profile["minimum"])), int(float(profile["ram"]))
             if low <= 0 or high < low:
                 raise ValueError("Некорректные значения RAM.")
+            command = [profile["java"], f"-Xms{low}G", f"-Xmx{high}G"]
+            if profile.get("launch_args"):
+                command.extend([profile["launch_args"], "nogui"])
+            else:
+                command.extend(["-jar", profile["jar"], "nogui"])
             proc = subprocess.Popen(
-                [profile["java"], f"-Xms{low}G", f"-Xmx{high}G",
-                 "-jar", profile["jar"], "nogui"],
+                command,
                 cwd=profile["folder"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True, encoding="utf-8",
                 errors="replace", bufsize=1
@@ -499,7 +503,7 @@ class App:
         for row, (label, key, default) in enumerate(rows, start=1):
             tk.Label(win, text=label, bg=PANEL, fg=MUTED).grid(row=row, column=0, padx=18, pady=7, sticky="w")
             if key == "core":
-                widget = ttk.Combobox(win, values=["Paper", "Purpur", "Vanilla"], state="readonly", width=28)
+                widget = ttk.Combobox(win, values=["Paper", "Purpur", "Vanilla", "Fabric", "Forge", "NeoForge"], state="readonly", width=28)
                 widget.set(default)
             elif key == "java":
                 widget = ttk.Combobox(win, values=["java", "java17", "java21", "java8"], width=28)
@@ -517,7 +521,7 @@ class App:
             if chosen:
                 folder_var.set(chosen)
         tk.Button(win, text="Выбрать папку…", command=browse, bg="#303e53", fg=FG, relief="flat").grid(row=9, column=1, padx=18, pady=5, sticky="e")
-        tk.Label(win, text="Встроенная загрузка доступна для Paper, Purpur и Vanilla.",
+        tk.Label(win, text="Доступны Paper, Purpur, Vanilla, Fabric, Forge и NeoForge. Для модов дополнительно установите совместимые файлы в mods.",
                  bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).grid(row=10, column=0, columnspan=2, padx=18, pady=8, sticky="w")
         def submit():
             try:
@@ -546,6 +550,7 @@ class App:
             target = Path(folder)
             target.mkdir(parents=True, exist_ok=True)
             headers = {"User-Agent": "Pristal-Pilot"}
+            launch_args = None
             if core == "Paper":
                 api = f"https://api.papermc.io/v2/projects/paper/versions/{urllib.parse.quote(version)}/builds"
                 with urllib.request.urlopen(urllib.request.Request(api, headers=headers), timeout=30) as response:
@@ -557,6 +562,59 @@ class App:
                 url = f"https://api.papermc.io/v2/projects/paper/versions/{version}/builds/{build['build']}/downloads/{jar}"
             elif core == "Purpur":
                 url = f"https://api.purpurmc.org/v2/purpur/{urllib.parse.quote(version)}/latest/download"
+            elif core == "Fabric":
+                def get_json(api_url):
+                    with urllib.request.urlopen(urllib.request.Request(api_url, headers=headers), timeout=30) as response:
+                        return json.loads(response.read().decode("utf-8"))
+                loaders = get_json(f"https://meta.fabricmc.net/v2/versions/loader/{urllib.parse.quote(version)}")
+                installers = get_json("https://meta.fabricmc.net/v2/versions/installer")
+                if not loaders or not installers:
+                    raise RuntimeError("Fabric не поддерживает указанную версию Minecraft.")
+                loader_version = loaders[0]["loader"]["version"]
+                installer_version = installers[0]["version"]
+                url = (f"https://meta.fabricmc.net/v2/versions/loader/{urllib.parse.quote(version)}/"
+                       f"{urllib.parse.quote(loader_version)}/{urllib.parse.quote(installer_version)}/server/jar")
+            elif core in ("Forge", "NeoForge"):
+                import xml.etree.ElementTree as ET
+                if core == "Forge":
+                    promotions = get_json("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json") if "get_json" in locals() else None
+                    if promotions is None:
+                        with urllib.request.urlopen(urllib.request.Request("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json", headers=headers), timeout=30) as response:
+                            promotions = json.loads(response.read().decode("utf-8"))
+                    builds = promotions.get("promos", {})
+                    forge_version = builds.get(version + "-recommended") or builds.get(version + "-latest")
+                    if not forge_version:
+                        raise RuntimeError(f"Forge: нет рекомендуемой сборки для Minecraft {version}.")
+                    installer_version = f"{version}-{forge_version}"
+                    installer_url = f"https://maven.minecraftforge.net/net/minecraftforge/forge/{installer_version}/forge-{installer_version}-installer.jar"
+                else:
+                    metadata_url = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+                    with urllib.request.urlopen(urllib.request.Request(metadata_url, headers=headers), timeout=30) as response:
+                        xml_root = ET.fromstring(response.read())
+                    candidates = [node.text for node in xml_root.findall(".//version")
+                                  if node.text and node.text.startswith(version + ".")]
+                    if not candidates:
+                        raise RuntimeError(f"NeoForge: не найдена сборка для Minecraft {version}.")
+                    def version_key(value):
+                        return tuple(int(part) if part.isdigit() else part for part in re.findall(r"\\d+|[A-Za-z]+", value))
+                    installer_version = sorted(candidates, key=version_key)[-1]
+                    installer_url = f"https://maven.neoforged.net/releases/net/neoforged/neoforge/{installer_version}/neoforge-{installer_version}-installer.jar"
+                installer_path = target / "modloader-installer.jar"
+                with urllib.request.urlopen(urllib.request.Request(installer_url, headers=headers), timeout=180) as response, installer_path.open("wb") as output:
+                    shutil.copyfileobj(response, output)
+                install = subprocess.run([java, "-jar", str(installer_path), "--installServer"],
+                                         cwd=str(target), capture_output=True, text=True, timeout=900)
+                if install.returncode != 0:
+                    details = (install.stderr or install.stdout or "Нет подробностей")[-2500:]
+                    raise RuntimeError(f"{core}: установка завершилась с ошибкой. Проверьте Java и версию.\\n{details}")
+                installer_path.unlink(missing_ok=True)
+                if core == "Forge":
+                    args_files = list((target / "libraries").glob("net/minecraftforge/forge/*/unix_args.txt"))
+                else:
+                    args_files = list((target / "libraries").glob("net/neoforged/neoforge/*/unix_args.txt"))
+                if not args_files:
+                    raise RuntimeError(f"{core}: установщик не создал unix_args.txt; проверьте журнал установщика.")
+                launch_args = "@" + str(args_files[-1].relative_to(target)).replace("\\\\", "/")
             else:
                 with urllib.request.urlopen("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json", timeout=30) as response:
                     manifest = json.loads(response.read().decode("utf-8"))
@@ -566,12 +624,14 @@ class App:
                 with urllib.request.urlopen(item["url"], timeout=30) as response:
                     metadata = json.loads(response.read().decode("utf-8"))
                 url = metadata["downloads"]["server"]["url"]
-            request = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(request, timeout=180) as response, (target / "server.jar").open("wb") as output:
-                shutil.copyfileobj(response, output)
-            (target / "eula.txt").write_text("eula=false\n", encoding="utf-8")
-            (target / "server.properties").write_text(f"server-port={port}\n", encoding="utf-8")
-            profile = {"id": os.urandom(8).hex(), "name": name, "folder": str(target), "jar": "server.jar",
+            if core not in ("Forge", "NeoForge"):
+                request = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(request, timeout=180) as response, (target / "server.jar").open("wb") as output:
+                    shutil.copyfileobj(response, output)
+            (target / "eula.txt").write_text("eula=false\\n", encoding="utf-8")
+            (target / "server.properties").write_text(f"server-port={port}\\n", encoding="utf-8")
+            profile = {"id": os.urandom(8).hex(), "name": name, "folder": str(target),
+                       "jar": "server.jar", "launch_args": launch_args,
                        "java": java, "ram": ram, "minimum": minimum, "port": str(port), "core": core, "version": version}
             def done():
                 self.items.append(profile)
