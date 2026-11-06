@@ -600,9 +600,25 @@ class App:
         win.configure(bg=PANEL)
         tk.Label(win, text=f"Сервер: {profile['name']}", bg=PANEL, fg=FG,
                  font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=22, pady=(20, 8))
-        tk.Label(win, text=f"Локальный адрес: {local_ip}:{port}", bg=PANEL, fg=FG).pack(anchor="w", padx=22, pady=8)
-        public = tk.Label(win, text="Внешний IP: определяем…", bg=PANEL, fg=FG)
-        public.pack(anchor="w", padx=22, pady=8)
+        local_address = f"{local_ip}:{port}"
+        local_row = tk.Frame(win, bg=PANEL)
+        local_row.pack(fill="x", padx=22, pady=8)
+        tk.Label(local_row, text=f"Локальный адрес: {local_address}", bg=PANEL, fg=FG).pack(side="left")
+        def copy_address(value, label):
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+            self.root.update()
+            messagebox.showinfo("IP скопирован", f"{label} скопирован в буфер обмена.", parent=win)
+        tk.Button(local_row, text="Копировать", command=lambda: copy_address(local_address, "Локальный адрес"),
+                  bg="#303e53", fg=FG, relief="flat", padx=10, pady=5).pack(side="right")
+        public_row = tk.Frame(win, bg=PANEL)
+        public_row.pack(fill="x", padx=22, pady=8)
+        public = tk.Label(public_row, text="Внешний IP: определяем…", bg=PANEL, fg=FG)
+        public.pack(side="left")
+        public_value = {"address": None}
+        public_copy = tk.Button(public_row, text="Копировать", state="disabled",
+                                bg="#303e53", fg=FG, relief="flat", padx=10, pady=5)
+        public_copy.pack(side="right")
         tk.Label(win, text="Для подключения из интернета настройте проброс TCP-порта на роутере либо используйте туннель (например, Playit) или VPS. Показ внешнего IP не означает, что порт открыт.",
                  bg=PANEL, fg=MUTED, wraplength=440, justify="left").pack(anchor="w", padx=22, pady=12)
         def fetch():
@@ -610,7 +626,12 @@ class App:
                 request = urllib.request.Request("https://api.ipify.org", headers={"User-Agent": "Pristal-Pilot"})
                 with urllib.request.urlopen(request, timeout=10) as response:
                     address = response.read().decode("ascii").strip()
-                self.root.after(0, lambda: public.config(text=f"Внешний IP: {address}:{port}"))
+                full_address = f"{address}:{port}"
+                def show_public_address():
+                    public_value["address"] = full_address
+                    public.config(text=f"Внешний IP: {full_address}")
+                    public_copy.config(state="normal", command=lambda: copy_address(full_address, "Внешний адрес"))
+                self.root.after(0, show_public_address)
             except Exception:
                 self.root.after(0, lambda: public.config(text="Внешний IP: не удалось определить"))
         threading.Thread(target=fetch, daemon=True).start()
