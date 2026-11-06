@@ -1,5 +1,5 @@
 #define MyAppName "Pristal-Pilot"
-#define MyAppVersion "0.7.0"
+#define MyAppVersion "0.7.1"
 #define MyAppPublisher "MrSkrenh"
 #define MyAppExeName "Pristal-Pilot.exe"
 [Setup]
