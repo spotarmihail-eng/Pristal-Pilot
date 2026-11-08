@@ -11,6 +11,10 @@ import sys
 import time
 import socket
 import tkinter as tk
+try:
+    from PIL import Image, ImageChops, ImageEnhance, ImageOps, ImageTk
+except ImportError:  # без Pillow приложение работает, но без картинки
+    Image = None
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
@@ -24,8 +28,32 @@ DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
 APP_VERSION = "0.7.1"
 GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
-BG, PANEL, PANEL2 = "#0d1119", "#151d2a", "#1c2737"
-FG, MUTED, BLUE, GREEN, RED = "#edf2fa", "#94a3b8", "#6488ff", "#35c58a", "#b94d60"
+BG, PANEL, PANEL2 = "#060e13", "#0b1a21", "#10262e"
+FG, MUTED, BLUE, GREEN, RED = "#e8fbf6", "#7fa3a5", "#0f9d8c", "#6dff9c", "#e0526d"
+ACC2, LINE = "#5ff5d6", "#14383f"
+
+
+def asset_path(name):
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / "assets" / name
+
+
+def render_backdrop(src, width, height, focus=(0.5, 0.45), dark=0.7,
+                    left_fade=0.9, bottom_fade=True, fade=(6, 14, 19)):
+    """Обрезает картинку под размер, затемняет и плавно растворяет в цвет панели."""
+    scale = max(width / src.width, height / src.height)
+    size = (max(1, round(src.width * scale)), max(1, round(src.height * scale)))
+    img = src.resize(size, Image.LANCZOS)
+    left = round((size[0] - width) * focus[0])
+    top = round((size[1] - height) * focus[1])
+    img = ImageEnhance.Brightness(img.crop((left, top, left + width, top + height))).enhance(dark)
+    grad = Image.linear_gradient("L")
+    mask = ImageOps.invert(grad.transpose(Image.Transpose.ROTATE_90)).resize((width, height))
+    mask = mask.point(lambda v: int(v * left_fade))
+    if bottom_fade:
+        vert = grad.resize((width, height)).point(lambda v: 0 if v < 110 else min(255, (v - 110) * 255 // 120))
+        mask = ImageChops.lighter(mask, vert)
+    return Image.composite(Image.new("RGB", (width, height), fade), img, mask)
 
 
 class App:
@@ -62,21 +90,176 @@ class App:
         proc = self.processes.get(profile["id"])
         return bool(proc and proc.poll() is None)
 
-    def card(self, parent, title, value="—", color=FG):
-        frame = tk.Frame(parent, bg=PANEL2, padx=13, pady=12)
+    def card(self, parent, title, value="—", color=FG, bar=True):
+        frame = tk.Frame(parent, bg=PANEL2, padx=13, pady=11,
+                         highlightthickness=1, highlightbackground=LINE)
         tk.Label(frame, text=title.upper(), bg=PANEL2, fg=MUTED,
                  font=("Segoe UI", 8, "bold")).pack(anchor="w")
         val = tk.Label(frame, text=value, bg=PANEL2, fg=color,
                        font=("Segoe UI", 17, "bold"))
         val.pack(anchor="w", pady=(5, 0))
+        frame.bar = None
+        if bar:
+            frame.bar = tk.Canvas(frame, height=5, bg=LINE, highlightthickness=0)
+            frame.bar.pack(fill="x", pady=(8, 0))
+            frame.bar.fill = frame.bar.create_rectangle(0, 0, 0, 5, fill=ACC2, width=0)
         return frame, val
+
+    def set_bar(self, card, frac, color=ACC2):
+        try:
+            if not card.bar or not card.bar.winfo_exists():
+                return
+            frac = max(0.0, min(1.0, frac))
+            card.bar.coords(card.bar.fill, 0, 0, card.bar.winfo_width() * frac, 5)
+            card.bar.itemconfig(card.bar.fill, fill=color)
+        except tk.TclError:
+            pass
+
+    def update_bars(self):
+        def num(label):
+            m = re.search(r"[0-9]+(?:\.[0-9]+)?", str(label.cget("text")))
+            return float(m.group()) if m else 0.0
+        profile = self.current()
+        try:
+            cap = float(profile.get("ram", 4)) if profile else 4.0
+        except (TypeError, ValueError):
+            cap = 4.0
+        ram = num(self.ram_value) / max(cap, 0.1)
+        self.set_bar(self.ram_card, ram, RED if ram > .9 else ACC2)
+        cpu = num(self.cpu_value) / 100
+        self.set_bar(self.cpu_card, cpu, RED if cpu > .85 else ACC2)
+        tps = num(self.tps_value) / 20
+        self.set_bar(self.tps_card, tps, GREEN if tps > .9 else "#ffb454")
+
+    def _mix(self, color, amt=0.14):
+        r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+        return "#%02x%02x%02x" % tuple(int(c + (255 - c) * amt) for c in (r, g, b))
+
+    def polish(self, widget):
+        """Курсор-рука и подсветка при наведении для всех кнопок."""
+        try:
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Button) and not getattr(child, "_pp", False):
+                    base = str(child.cget("bg"))
+                    if base.startswith("#") and len(base) == 7:
+                        hov = self._mix(base)
+                        child._pp = True
+                        child.config(cursor="hand2", activebackground=hov)
+                        child.bind("<Enter>", lambda e, b=child, h=hov: b.config(bg=h) if str(b.cget("state")) != "disabled" else None)
+                        child.bind("<Leave>", lambda e, b=child, n=base: b.config(bg=n))
+                self.polish(child)
+        except tk.TclError:
+            pass
+
+    def backdrop(self, width, height, **kw):
+        if Image is None:
+            return None
+        key = (width, height, tuple(sorted(kw.items())))
+        cache = self.__dict__.setdefault("_bg_cache", {})
+        if key in cache:
+            return cache[key]
+        try:
+            if not hasattr(self, "_bg_src"):
+                self._bg_src = Image.open(asset_path("bg.jpg")).convert("RGB")
+            photo = ImageTk.PhotoImage(render_backdrop(self._bg_src, width, height, **kw))
+        except Exception:
+            return None
+        if len(cache) > 12:
+            cache.clear()
+        cache[key] = photo
+        return photo
+
+    def make_hero(self, parent, title, subtitle="", height=140, focus=(0.5, 0.42)):
+        """Шапка с арт-фоном: текст рисуется прямо на картинке, кнопки — в hero.actions."""
+        cv = tk.Canvas(parent, height=height, bg=PANEL, highlightthickness=1, highlightbackground=LINE)
+        cv.pack(fill="x", pady=(0, 14))
+        cv.actions = []
+        cv.job = None
+
+        def draw():
+            cv.job = None
+            width = cv.winfo_width()
+            if width < 60 or not cv.winfo_exists():
+                return
+            cv.delete("all")
+            photo = self.backdrop(width, height, focus=focus, dark=0.75)
+            if photo:
+                cv.photo = photo
+                cv.create_image(0, 0, anchor="nw", image=photo)
+            ty = height - 64
+            for i, color in enumerate((ACC2, BLUE, GREEN)):
+                cv.create_rectangle(30 + i * 13, ty - 34, 39 + i * 13, ty - 25, fill=color, width=0)
+            cv.create_text(30, ty, anchor="w", text=title, fill=FG, font=("Segoe UI", 24, "bold"))
+            if subtitle:
+                cv.create_text(32, height - 28, anchor="w", text=subtitle, fill="#a9cfcb", font=("Segoe UI", 10))
+            cv.create_rectangle(0, height - 2, width, height, fill=ACC2, width=0, stipple="gray50")
+            x = width - 20
+            for widget in cv.actions:
+                cv.create_window(x, 20, anchor="ne", window=widget)
+                x -= widget.winfo_reqwidth() + 10
+
+        def schedule(_e=None):
+            if cv.job:
+                cv.after_cancel(cv.job)
+            cv.job = cv.after(40, draw)
+        cv.bind("<Configure>", schedule)
+        return cv
+
+    def core_color(self, core):
+        core = str(core).lower()
+        if any(x in core for x in ("forge", "fabric", "quilt")):
+            return ("#7c3aed", "#a78bfa", "#4c1d95")
+        if "vanilla" in core:
+            return ("#2563eb", "#60a5fa", "#1e3a8a")
+        return ("#3f9d3b", "#6fd45f", "#7a5232")
+
+    def server_card(self, index, profile):
+        run = self.running(profile)
+        card = tk.Frame(self.list_frame, bg=PANEL, highlightthickness=1,
+                        highlightbackground=LINE, cursor="hand2")
+        card.pack(fill="x", pady=5)
+        ico = tk.Canvas(card, width=52, height=52, bg=PANEL, highlightthickness=0)
+        ico.pack(side="left", padx=14, pady=12)
+        base, light, dark = self.core_color(profile.get("core", ""))
+        seed = sum(ord(c) for c in profile["name"])
+        for row in range(4):
+            for col in range(4):
+                shade = light if row == 0 else (base if (seed + row * 3 + col * 5) % 3 else dark)
+                ico.create_rectangle(col * 13, row * 13, col * 13 + 13, row * 13 + 13, fill=shade, width=0)
+        info = tk.Frame(card, bg=PANEL)
+        info.pack(side="left", fill="x", expand=True)
+        tk.Label(info, text=profile["name"], bg=PANEL, fg=FG, anchor="w",
+                 font=("Segoe UI", 13, "bold")).pack(fill="x")
+        tk.Label(info, text=f'{profile.get("core", "—")}  •  Minecraft {profile.get("version", "—")}  •  порт {profile.get("port", "25565")}',
+                 bg=PANEL, fg=MUTED, anchor="w", font=("Segoe UI", 9)).pack(fill="x", pady=(2, 0))
+        pill = tk.Label(card, text="●  Онлайн" if run else "○  Остановлен",
+                        bg="#12402a" if run else "#12262c", fg=GREEN if run else MUTED,
+                        padx=12, pady=4, font=("Segoe UI", 9, "bold"))
+        pill.pack(side="right", padx=18)
+
+        def enter(_e):
+            card.config(highlightbackground=BLUE)
+
+        def leave(_e):
+            x, y = card.winfo_pointerxy()
+            w = card.winfo_containing(x, y)
+            if w is None or not str(w).startswith(str(card)):
+                card.config(highlightbackground=LINE)
+
+        def open_it(_e, i=index):
+            self.selected = i
+            self.show_server_page("console")
+        for w in (card, ico, info, pill, *info.winfo_children()):
+            w.bind("<Enter>", enter)
+            w.bind("<Leave>", leave)
+            w.bind("<Button-1>", open_it)
 
     def build_ui(self):
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("Treeview", background=PANEL, fieldbackground=PANEL,
                         foreground=FG, rowheight=38, borderwidth=0)
-        style.map("Treeview", background=[("selected", "#2b3d5b")],
+        style.map("Treeview", background=[("selected", "#124a4a")],
                   foreground=[("selected", FG)])
         self.root.configure(bg=BG)
 
@@ -89,11 +272,18 @@ class App:
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
         self.nav_header = tk.Frame(self.sidebar, bg=PANEL)
-        self.nav_header.pack(fill="x", padx=14, pady=(18, 22))
-        tk.Label(self.nav_header, text="PRISTAL", bg=PANEL, fg=FG,
-                 font=("Segoe UI", 19, "bold")).pack(anchor="w")
-        tk.Label(self.nav_header, text="PILOT  •  by MrSkrenh", bg=PANEL,
-                 fg=MUTED, font=("Segoe UI", 8, "bold")).pack(anchor="w")
+        self.nav_header.pack(fill="x", pady=(0, 14))
+        banner = tk.Canvas(self.nav_header, width=218, height=150, bg=PANEL, highlightthickness=0)
+        banner.pack()
+        photo = self.backdrop(218, 150, focus=(0.5, 0.4), dark=0.9, left_fade=0.0, fade=(11, 26, 33))
+        if photo:
+            banner.photo = photo
+            banner.create_image(0, 0, anchor="nw", image=photo)
+        banner.create_polygon(26, 96, 38, 103, 26, 110, 14, 103, fill=ACC2, outline="")
+        banner.create_polygon(14, 103, 26, 110, 26, 124, 14, 117, fill=BLUE, outline="")
+        banner.create_polygon(38, 103, 26, 110, 26, 124, 38, 117, fill="#0a7f73", outline="")
+        banner.create_text(50, 108, anchor="w", text="Pristal-Pilot", fill=FG, font=("Segoe UI", 15, "bold"))
+        banner.create_text(16, 138, anchor="w", text="by MrSkrenh  •  управляй сервером легко", fill=MUTED, font=("Segoe UI", 8))
 
         self.nav_area = tk.Frame(self.sidebar, bg=PANEL)
         self.nav_area.pack(fill="both", expand=True, padx=9)
@@ -110,7 +300,8 @@ class App:
         self.monitor.pack_propagate(False)
         tk.Label(self.monitor, text="МОНИТОРИНГ", bg=PANEL, fg=MUTED,
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=14, pady=(20, 14))
-        self.ip_card = tk.Frame(self.monitor, bg=PANEL2, padx=10, pady=10)
+        self.ip_card = tk.Frame(self.monitor, bg=PANEL2, padx=10, pady=10,
+                                highlightthickness=1, highlightbackground=LINE)
         self.ip_card.pack(fill="x", padx=10, pady=(0, 7))
         tk.Label(self.ip_card, text="АДРЕС СЕРВЕРА", bg=PANEL2, fg=MUTED,
                  font=("Segoe UI", 8, "bold")).pack(anchor="w")
@@ -119,7 +310,7 @@ class App:
                                         wraplength=180, font=("Segoe UI", 9, "bold"))
         self.local_ip_value.pack(anchor="w", pady=(7, 2))
         self.local_ip_copy = tk.Button(self.ip_card, text="Копировать локальный",
-                                        state="disabled", bg="#303e53", fg=FG,
+                                        state="disabled", bg="#16424a", fg=FG,
                                         relief="flat", padx=7, pady=4)
         self.local_ip_copy.pack(anchor="w", pady=(0, 6))
         self.public_ip_value = tk.Label(self.ip_card, text="Внешний: —",
@@ -127,18 +318,18 @@ class App:
                                         wraplength=180, font=("Segoe UI", 9, "bold"))
         self.public_ip_value.pack(anchor="w", pady=(0, 2))
         self.public_ip_copy = tk.Button(self.ip_card, text="Копировать внешний",
-                                        state="disabled", bg="#303e53", fg=FG,
+                                        state="disabled", bg="#16424a", fg=FG,
                                         relief="flat", padx=7, pady=4)
         self.public_ip_copy.pack(anchor="w")
         self.ram_card, self.ram_value = self.card(self.monitor, "RAM процесса")
         self.ram_card.pack(fill="x", padx=10, pady=5)
         self.cpu_card, self.cpu_value = self.card(self.monitor, "CPU · % одного ядра")
         self.cpu_card.pack(fill="x", padx=10, pady=5)
-        self.disk_card, self.disk_value = self.card(self.monitor, "Диск сервера")
+        self.disk_card, self.disk_value = self.card(self.monitor, "Диск сервера", bar=False)
         self.disk_card.pack(fill="x", padx=10, pady=5)
         self.tps_card, self.tps_value = self.card(self.monitor, "TPS")
         self.tps_card.pack(fill="x", padx=10, pady=5)
-        self.players_card, self.players_value = self.card(self.monitor, "Игроки")
+        self.players_card, self.players_value = self.card(self.monitor, "Игроки", bar=False)
         self.players_card.pack(fill="x", padx=10, pady=5)
         self.adaptive_label = tk.Label(self.monitor, text="АВТОРЕЖИМ: ожидание",
                                        bg=PANEL, fg=MUTED,
@@ -162,13 +353,14 @@ class App:
     def clear_content(self):
         for child in self.content.winfo_children():
             child.destroy()
+        self.root.after(60, lambda: self.polish(self.root))
 
     def nav_button(self, label, command, active=False):
         return tk.Button(
             self.nav_area, text=label, command=command, anchor="w",
-            bg="#263754" if active else PANEL, fg=FG if active else MUTED,
-            activebackground="#263754", activeforeground=FG,
-            relief="flat", bd=0, padx=13, pady=12,
+            bg="#0f3a3f" if active else PANEL, fg=FG if active else MUTED,
+            activebackground="#0f3a3f", activeforeground=FG,
+            relief="flat", bd=0, padx=14, pady=11,
             font=("Segoe UI", 10, "bold")
         )
 
@@ -181,22 +373,16 @@ class App:
         self.nav_button("ⓘ  О нас", self.show_about).pack(fill="x", pady=3)
         for child in self.sidebar_footer.winfo_children():
             child.destroy()
-        tk.Label(self.sidebar_footer, text=f"Версия {APP_VERSION}",
+        tk.Label(self.sidebar_footer, text=f"●  Приложение активно\nВерсия {APP_VERSION}", justify="left",
                  bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w")
         self.monitor.pack_forget()
         self.monitor.pack(side="right", fill="y")
         self.clear_content()
 
-        header = tk.Frame(self.content, bg=BG)
-        header.pack(fill="x", pady=(0, 18))
-        tk.Label(header, text="Мои сервера", bg=BG, fg=FG,
-                 font=("Segoe UI", 23, "bold")).pack(side="left")
-        tk.Button(header, text="↻ Проверить обновления",
-                  command=self.check_updates, bg="#202e46", fg="#b9cbff",
-                  relief="flat", padx=12, pady=9).pack(side="right")
-        tk.Label(self.content,
-                 text="Все созданные и добавленные серверы находятся здесь.",
-                 bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 14))
+        hero = self.make_hero(self.content, "Мои сервера",
+                              "Все созданные и добавленные серверы находятся здесь.", 150, focus=(0.5, 0.4))
+        hero.actions.append(tk.Button(hero, text="↻ Проверить обновления", command=self.check_updates,
+                                      bg="#0f2d33", fg=ACC2, relief="flat", padx=12, pady=9))
 
         actions = tk.Frame(self.content, bg=BG)
         actions.pack(fill="x", pady=(0, 12))
@@ -205,30 +391,31 @@ class App:
                   relief="flat", padx=18, pady=11,
                   font=("Segoe UI", 10, "bold")).pack(side="left", padx=(0, 8))
         tk.Button(actions, text="Добавить существующий",
-                  command=self.add, bg="#263754", fg=FG,
+                  command=self.add, bg="#0f3a3f", fg=FG,
                   relief="flat", padx=16, pady=11).pack(side="left")
         self.limit_label = tk.Label(actions, text="Одновременно: 0 / 3",
                                     bg=BG, fg=MUTED, font=("Segoe UI", 9))
         self.limit_label.pack(side="right")
 
-        list_card = tk.Frame(self.content, bg=PANEL, padx=10, pady=10)
-        list_card.pack(fill="both", expand=True)
-        self.tree = ttk.Treeview(list_card, show="tree", selectmode="browse")
-        self.tree.pack(fill="both", expand=True)
-        self.tree.bind("<<TreeviewSelect>>", self.choose)
+        canvas = tk.Canvas(self.content, bg=BG, highlightthickness=0)
+        canvas.pack(fill="both", expand=True)
+        self.list_frame = tk.Frame(canvas, bg=BG)
+        window = canvas.create_window((0, 0), window=self.list_frame, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window, width=e.width))
+        self.list_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Enter>", lambda e: canvas.bind_all(
+            "<MouseWheel>", lambda ev: canvas.yview_scroll(int(-ev.delta / 120), "units")))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        self.tree = canvas
         self.refresh_servers()
 
     def show_about(self):
         self.current_section = "about"
         self.clear_content()
-        card = tk.Frame(self.content, bg=PANEL, padx=30, pady=28)
+        self.make_hero(self.content, "Pristal-Pilot",
+                       "Разработано MrSkrenh  •  программа бесплатная", 230, focus=(0.5, 0.4))
+        card = tk.Frame(self.content, bg=PANEL, padx=30, pady=22)
         card.pack(fill="both", expand=True)
-        tk.Label(card, text="PRISTAL-PILOT", bg=PANEL, fg=FG,
-                 font=("Segoe UI", 25, "bold")).pack(anchor="w")
-        tk.Label(card, text="Разработано MrSkrenh", bg=PANEL, fg=FG,
-                 font=("Segoe UI", 15, "bold")).pack(anchor="w", pady=(22, 6))
-        tk.Label(card, text="Программа бесплатная.", bg=PANEL, fg=MUTED,
-                 font=("Segoe UI", 11)).pack(anchor="w", pady=(0, 22))
         import webbrowser
         for label, url in [
             ("Discord", "https://discord.gg/vywgQxyJt"),
@@ -275,20 +462,15 @@ class App:
                  bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w")
 
         self.clear_content()
-        header = tk.Frame(self.content, bg=BG)
-        header.pack(fill="x", pady=(0, 14))
-        self.server_title = tk.Label(header, text=profile["name"], bg=BG, fg=FG,
-                                     font=("Segoe UI", 21, "bold"))
-        self.server_title.pack(side="left")
-        self.status = tk.Label(header,
-                               text="● РАБОТАЕТ" if self.running(profile) else "● ОСТАНОВЛЕН",
-                               bg=BG, fg=GREEN if self.running(profile) else "#e3a4ad",
-                               font=("Segoe UI", 9, "bold"))
-        self.status.pack(side="right")
-        self.server_info = tk.Label(self.content,
-            text=f'{profile["folder"]}  •  {profile.get("core", "Не указано")}  •  Minecraft {profile.get("version", "—")}',
-            bg=BG, fg=MUTED, font=("Segoe UI", 9))
-        self.server_info.pack(anchor="w", pady=(0, 12))
+        hero = self.make_hero(
+            self.content, profile["name"],
+            f'{profile["folder"]}  •  {profile.get("core", "Не указано")}  •  Minecraft {profile.get("version", "—")}',
+            130, focus=(0.5, 0.42))
+        self.server_title = self.server_info = hero
+        self.status = tk.Label(hero, text="● РАБОТАЕТ" if self.running(profile) else "● ОСТАНОВЛЕН",
+                               bg="#081318", fg=GREEN if self.running(profile) else "#ff9db0",
+                               padx=14, pady=6, font=("Segoe UI", 9, "bold"))
+        hero.actions.append(self.status)
 
         if section == "console":
             self.render_console()
@@ -335,7 +517,7 @@ class App:
         controls.pack(fill="x", pady=(0, 12))
         for label, color, action in [
             ("▶ Включить", GREEN, self.start),
-            ("↻ Перезапустить", "#465a7b", self.restart),
+            ("↻ Перезапустить", "#175058", self.restart),
             ("■ Выключить", RED, self.stop)
         ]:
             tk.Button(controls, text=label, command=action, bg=color,
@@ -345,10 +527,13 @@ class App:
         console_head.pack(fill="x")
         tk.Label(console_head, text="КОНСОЛЬ СЕРВЕРА", bg=PANEL,
                  fg=MUTED, font=("Segoe UI", 8, "bold")).pack(anchor="w")
-        self.output = tk.Text(self.content, bg="#080c12", fg="#c8d6e9",
-                              insertbackground=FG, font=("Consolas", 9),
+        self.output = tk.Text(self.content, bg="#040b0e", fg="#d6efe9", padx=14, pady=10,
+                              insertbackground=FG, font=("Consolas", 10),
                               state="disabled", relief="flat", wrap="word")
         self.output.pack(fill="both", expand=True, pady=(0, 8))
+        for tag, color in (("ts", "#5c8085"), ("err", "#ff6b8a"), ("warn", "#ffb454"),
+                           ("ok", GREEN), ("cmd", ACC2)):
+            self.output.tag_configure(tag, foreground=color)
         command_row = tk.Frame(self.content, bg=BG)
         command_row.pack(fill="x")
         self.command = tk.Entry(command_row, bg=PANEL, fg=FG,
@@ -420,38 +605,46 @@ class App:
 
     def log(self, text):
         self.output.configure(state="normal")
-        self.output.insert("end", text + "\n")
+        tag = ""
+        if re.search(r"(?i)\b(ERROR|SEVERE|Exception|FATAL)\b", text):
+            tag = "err"
+        elif re.search(r"(?i)\bWARN", text):
+            tag = "warn"
+        elif re.search(r'(?i)\bDone \(|Pristal-Pilot\]', text):
+            tag = "ok"
+        elif text.lstrip().startswith(">"):
+            tag = "cmd"
+        stamp = re.match(r"^(\[\d\d:\d\d:\d\d\])(.*)$", text)
+        if stamp:
+            self.output.insert("end", stamp.group(1), "ts")
+            self.output.insert("end", stamp.group(2) + "\n", tag)
+        else:
+            self.output.insert("end", text + "\n", tag)
         self.output.see("end")
         self.output.configure(state="disabled")
 
     def refresh_servers(self):
         try:
-            if not self.tree or not self.tree.winfo_exists():
+            frame = getattr(self, "list_frame", None)
+            if not self.tree or not frame or not frame.winfo_exists():
                 return
-            self.tree.delete(*self.tree.get_children())
+            for child in frame.winfo_children():
+                child.destroy()
         except tk.TclError:
             return
         active = 0
         for i, profile in enumerate(self.items):
-            is_running = self.running(profile)
-            active += int(is_running)
-            prefix = "●  " if is_running else "○  "
-            self.tree.insert("", "end", iid=str(i), text=prefix + profile["name"])
+            active += int(self.running(profile))
+            self.server_card(i, profile)
+        if not self.items:
+            tk.Label(frame, text="Серверов пока нет", bg=BG, fg=FG,
+                     font=("Segoe UI", 15, "bold")).pack(pady=(60, 4))
+            tk.Label(frame, text="Нажмите «Создать сервер» или добавьте уже готовую папку.",
+                     bg=BG, fg=MUTED, font=("Segoe UI", 10)).pack()
         self.limit_label.config(text=f"Одновременно: {active} / 3")
-        if self.tree and self.selected is not None and self.selected < len(self.items):
-            self.tree.selection_set(str(self.selected))
 
     def choose(self, _event=None):
-        try:
-            if not self.tree or not self.tree.winfo_exists():
-                return
-            selected = self.tree.selection()
-        except tk.TclError:
-            return
-        if not selected:
-            return
-        self.selected = int(selected[0])
-        self.show_server_page("console")
+        pass
 
     def open_server_files(self):
         profile = self.current()
@@ -497,7 +690,7 @@ class App:
             webbrowser.open("https://www.minecraft.net/eula")
 
         tk.Button(window, text="Открыть правила EULA на сайте Minecraft",
-                  command=open_eula, bg="#303e53", fg=FG, relief="flat",
+                  command=open_eula, bg="#16424a", fg=FG, relief="flat",
                   padx=12, pady=8).pack(anchor="w", padx=22, pady=(0, 14))
 
         accepted = tk.BooleanVar(value=False)
@@ -786,6 +979,7 @@ class App:
             self.tps_value.config(text="—")
             self.players_value.config(text="—")
             self.adaptive_label.config(text="АВТОРЕЖИМ: ожидание", fg=MUTED)
+        self.update_bars()
         self.root.after(1000, self.update_metrics)
 
     def create_server_wizard(self):
@@ -820,7 +1014,7 @@ class App:
             chosen = filedialog.askdirectory()
             if chosen:
                 folder_var.set(chosen)
-        tk.Button(win, text="Выбрать папку…", command=browse, bg="#303e53", fg=FG, relief="flat").grid(row=9, column=1, padx=18, pady=5, sticky="e")
+        tk.Button(win, text="Выбрать папку…", command=browse, bg="#16424a", fg=FG, relief="flat").grid(row=9, column=1, padx=18, pady=5, sticky="e")
         tk.Label(win, text="Доступны Paper, Purpur, Vanilla, Fabric, Forge и NeoForge. Для модов дополнительно установите совместимые файлы в mods.",
                  bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).grid(row=10, column=0, columnspan=2, padx=18, pady=8, sticky="w")
         def submit():
@@ -1056,14 +1250,14 @@ class App:
                     parent=win
                 )
         tk.Button(local_row, text="Копировать", command=lambda: copy_address(local_address, "Локальный адрес"),
-                  bg="#303e53", fg=FG, relief="flat", padx=10, pady=5).pack(side="right")
+                  bg="#16424a", fg=FG, relief="flat", padx=10, pady=5).pack(side="right")
         public_row = tk.Frame(win, bg=PANEL)
         public_row.pack(fill="x", padx=22, pady=8)
         public = tk.Label(public_row, text="Внешний IP: определяем…", bg=PANEL, fg=FG)
         public.pack(side="left")
         public_value = {"address": None}
         public_copy = tk.Button(public_row, text="Копировать", state="disabled",
-                                bg="#303e53", fg=FG, relief="flat", padx=10, pady=5)
+                                bg="#16424a", fg=FG, relief="flat", padx=10, pady=5)
         public_copy.pack(side="right")
         tk.Label(win, text="Для подключения из интернета настройте проброс TCP-порта на роутере либо используйте туннель (например, Playit) или VPS. Показ внешнего IP не означает, что порт открыт.",
                  bg=PANEL, fg=MUTED, wraplength=440, justify="left").pack(anchor="w", padx=22, pady=12)
@@ -1177,6 +1371,11 @@ class App:
 
 
 if __name__ == "__main__":
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
     root = tk.Tk()
     App(root)
     root.mainloop()
