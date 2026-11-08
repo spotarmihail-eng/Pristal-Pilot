@@ -1,4 +1,5 @@
 import json
+import locale
 import os
 import queue
 import hashlib
@@ -845,8 +846,20 @@ class App:
             messagebox.showerror("Ошибка запуска", str(error))
 
     def reader(self, profile_id, proc):
-        for line in proc.stdout:
-            self.queue.put((profile_id, line.rstrip()))
+        fallback = locale.getpreferredencoding(False) or "cp1251"
+        hinted = False
+        for raw in proc.stdout.buffer:
+            try:
+                line = raw.decode("utf-8")
+            except UnicodeDecodeError:  # системные ошибки Windows приходят в cp1251
+                line = raw.decode(fallback, errors="replace")
+            line = line.rstrip()
+            self.queue.put((profile_id, line))
+            if not hinted and ("DirectoryLock.create" in line or "session.lock" in line):
+                hinted = True
+                self.queue.put((profile_id, "[Pristal-Pilot] Папка мира занята другим процессом: "
+                                "скорее всего, с ней уже работает другой java.exe. "
+                                "Завершите его в диспетчере задач и запустите сервер снова."))
         self.queue.put((profile_id, "[Pristal-Pilot] Процесс завершён."))
 
     def poll(self):
