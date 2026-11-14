@@ -27,7 +27,7 @@ except ImportError:
 DATA = Path(os.getenv("APPDATA", str(Path.home()))) / "Pristal-Pilot"
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
-APP_VERSION = "0.7.1"
+APP_VERSION = "0.8.0"
 GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
 BG, PANEL, PANEL2 = "#060e13", "#0b1a21", "#10262e"
 FG, MUTED, BLUE, GREEN, RED = "#e8fbf6", "#7fa3a5", "#0f9d8c", "#6dff9c", "#e0526d"
@@ -394,6 +394,9 @@ class App:
         tk.Button(actions, text="Добавить существующий",
                   command=self.add, bg="#0f3a3f", fg=FG,
                   relief="flat", padx=16, pady=11).pack(side="left")
+        tk.Button(actions, text="☁  Виртуальный сервер",
+                  command=self.show_virtual_plans, bg="#16424a", fg=ACC2,
+                  relief="flat", padx=16, pady=11).pack(side="left", padx=(8, 0))
         self.limit_label = tk.Label(actions, text="Одновременно: 0 / 3",
                                     bg=BG, fg=MUTED, font=("Segoe UI", 9))
         self.limit_label.pack(side="right")
@@ -409,6 +412,94 @@ class App:
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
         self.tree = canvas
         self.refresh_servers()
+
+    def show_virtual_plans(self):
+        """Каталог тарифов. Реальная выдача включается после настройки backend и биллинга."""
+        self.current_section = "virtual_plans"
+        self.selected = None
+        self.monitor.pack_forget()
+        self.clear_content()
+        for child in self.nav_area.winfo_children():
+            child.destroy()
+        self.nav_button("←  Назад к серверам", self.show_home).pack(fill="x", pady=(0, 12))
+        self.nav_button("☁  Виртуальные серверы", self.show_virtual_plans, True).pack(fill="x", pady=2)
+
+        self.make_hero(
+            self.content, "Виртуальные серверы",
+            "Выберите ресурсы для Minecraft-сервера в облаке.", 130
+        )
+        notice = tk.Frame(self.content, bg="#342719", padx=14, pady=11,
+                          highlightthickness=1, highlightbackground="#76552a")
+        notice.pack(fill="x", pady=(0, 14))
+        tk.Label(
+            notice,
+            text="ПРЕДВАРИТЕЛЬНЫЙ РЕЖИМ · Хостинг, автоматическая выдача и приём СБП ещё не подключены. "
+                 "Оплата сейчас не принимается, VPS не создаётся.",
+            bg="#342719", fg="#ffd28a", justify="left", wraplength=850,
+            font=("Segoe UI", 9, "bold")
+        ).pack(anchor="w")
+
+        plans = [
+            ("Free", "0 ₽ / месяц", "До 2 ГБ RAM", "Тестовый бесплатный план", "Бесплатный доступ будет открыт после запуска инфраструктуры."),
+            ("Starter", "1 190 ₽ / месяц*", "2 ГБ RAM", "Для небольшого сервера", "Предварительная цена, не оферта."),
+            ("Basic", "1 690 ₽ / месяц*", "4 ГБ RAM", "Для сервера с плагинами", "Предварительная цена, не оферта."),
+            ("Pro", "2 790 ₽ / месяц*", "8 ГБ RAM", "Для модифицированных сборок", "Предварительная цена, не оферта."),
+            ("Ultra", "4 990 ₽ / месяц*", "16 ГБ RAM", "Для крупных сборок", "Предварительная цена, не оферта.")
+        ]
+        grid = tk.Frame(self.content, bg=BG)
+        grid.pack(fill="both", expand=True)
+        for index, (name, price, ram, tagline, note) in enumerate(plans):
+            card = tk.Frame(grid, bg=PANEL, padx=18, pady=16,
+                            highlightthickness=1, highlightbackground=LINE)
+            card.grid(row=index // 3, column=index % 3, sticky="nsew",
+                      padx=6, pady=6)
+            tk.Label(card, text=name.upper(), bg=PANEL, fg=ACC2,
+                     font=("Segoe UI", 12, "bold")).pack(anchor="w")
+            tk.Label(card, text=price, bg=PANEL, fg=FG,
+                     font=("Segoe UI", 18, "bold")).pack(anchor="w", pady=(12, 4))
+            tk.Label(card, text=ram, bg=PANEL, fg=GREEN,
+                     font=("Segoe UI", 11, "bold")).pack(anchor="w")
+            tk.Label(card, text=tagline, bg=PANEL, fg=MUTED,
+                     wraplength=230, justify="left").pack(anchor="w", pady=(8, 4))
+            tk.Label(card, text=note, bg=PANEL, fg=MUTED,
+                     wraplength=230, justify="left",
+                     font=("Segoe UI", 8)).pack(anchor="w", pady=(0, 12))
+            tk.Button(
+                card, text="Выбрать" if name == "Free" else "Подробнее",
+                command=lambda n=name, p=price, r=ram: self.virtual_plan_info(n, p, r),
+                bg=BLUE if name == "Free" else "#16424a",
+                fg="white" if name == "Free" else ACC2,
+                relief="flat", padx=14, pady=8
+            ).pack(anchor="w")
+        for column in range(3):
+            grid.grid_columnconfigure(column, weight=1)
+        for row in range(2):
+            grid.grid_rowconfigure(row, weight=1)
+        tk.Label(
+            self.content,
+            text="* Цены платных тарифов ориентировочные. Финальная стоимость будет рассчитываться "
+                 "как стоимость VPS у провайдера + 50 ₽ после подключения хостинга.",
+            bg=BG, fg=MUTED, wraplength=900, justify="left",
+            font=("Segoe UI", 8)
+        ).pack(anchor="w", pady=(10, 0))
+
+    def virtual_plan_info(self, name, price, ram):
+        if name == "Free":
+            messagebox.showinfo(
+                "Тариф Free",
+                "Бесплатный тариф выбран. Сейчас бесплатный VPS-провайдер и серверная часть "
+                "автоматической выдачи ещё не подключены. Поэтому доступ к реальной машине пока "
+                "не может быть предоставлен. Ваш компьютер не будет использоваться как хостинг."
+            )
+            return
+        messagebox.showinfo(
+            f"Тариф {name}",
+            f"Ресурсы: {ram}\nПредварительная цена: {price}\n\n"
+            "Платёжная система СБП и API VPS-хостинга пока не подключены. "
+            "Оплата отключена, QR-код не создаётся, сервер не будет запущен. "
+            "После подключения провайдера цена будет пересчитана по формуле: "
+            "стоимость VPS + 50 ₽."
+        )
 
     def show_about(self):
         self.current_section = "about"
