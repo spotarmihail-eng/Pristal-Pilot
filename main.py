@@ -27,7 +27,7 @@ except ImportError:
 DATA = Path(os.getenv("APPDATA", str(Path.home()))) / "Pristal-Pilot"
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
-APP_VERSION = "0.8.2"
+APP_VERSION = "0.8.3"
 GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
 BG, PANEL, PANEL2 = "#060e13", "#0b1a21", "#10262e"
 FG, MUTED, BLUE, GREEN, RED = "#e8fbf6", "#7fa3a5", "#0f9d8c", "#6dff9c", "#e0526d"
@@ -1160,15 +1160,35 @@ class App:
             target.mkdir(parents=True, exist_ok=True)
             headers = {"User-Agent": "Pristal-Pilot"}
             launch_args = None
+            expected_sha256 = None
             if core == "Paper":
-                api = f"https://api.papermc.io/v2/projects/paper/versions/{urllib.parse.quote(version)}/builds"
-                with urllib.request.urlopen(urllib.request.Request(api, headers=headers), timeout=30) as response:
-                    builds = json.loads(response.read().decode("utf-8")).get("builds", [])
-                if not builds:
-                    raise RuntimeError("Paper: сборки для этой версии не найдены.")
-                build = builds[-1]
-                jar = build["downloads"]["application"]["name"]
-                url = f"https://api.papermc.io/v2/projects/paper/versions/{version}/builds/{build['build']}/downloads/{jar}"
+                # PaperMC отключил старый API v2 (HTTP 410); используем Fill API v3.
+                api = (f"https://fill.papermc.io/v3/projects/paper/versions/"
+                       f"{urllib.parse.quote(version)}/builds")
+                paper_headers = {
+                    "User-Agent": "Pristal-Pilot/0.8.3 (https://github.com/spotarmihail-eng/Pristal-Pilot)",
+                    "Accept": "application/json"
+                }
+                with urllib.request.urlopen(
+                    urllib.request.Request(api, headers=paper_headers), timeout=30
+                ) as response:
+                    builds = json.loads(response.read().decode("utf-8"))
+                if isinstance(builds, dict) and builds.get("ok") is False:
+                    raise RuntimeError("PaperMC: " + builds.get("message", "ошибка API"))
+                stable_builds = [
+                    item for item in builds
+                    if item.get("channel") == "STABLE"
+                    and item.get("downloads", {}).get("server:default", {}).get("url")
+                ] if isinstance(builds, list) else []
+                if not stable_builds:
+                    raise RuntimeError(
+                        f"Paper: для Minecraft {version} пока нет стабильной сборки. "
+                        "Выберите другую версию или ядро."
+                    )
+                build = stable_builds[0]
+                download = build["downloads"]["server:default"]
+                url = download["url"]
+                expected_sha256 = download.get("checksums", {}).get("sha256")
             elif core == "Purpur":
                 url = f"https://api.purpurmc.org/v2/purpur/{urllib.parse.quote(version)}/latest/download"
             elif core == "Fabric":
@@ -1235,8 +1255,20 @@ class App:
                 url = metadata["downloads"]["server"]["url"]
             if core not in ("Forge", "NeoForge"):
                 request = urllib.request.Request(url, headers=headers)
-                with urllib.request.urlopen(request, timeout=180) as response, (target / "server.jar").open("wb") as output:
-                    shutil.copyfileobj(response, output)
+                jar_path = target / "server.jar"
+                digest = hashlib.sha256()
+                with urllib.request.urlopen(request, timeout=180) as response, jar_path.open("wb") as output:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        output.write(chunk)
+                        if core == "Paper" and expected_sha256:
+                            digest.update(chunk)
+                if core == "Paper" and expected_sha256:
+                    if digest.hexdigest().lower() != expected_sha256.lower():
+                        jar_path.unlink(missing_ok=True)
+                        raise RuntimeError("Paper: контрольная сумма скачанного файла не совпала. Повторите загрузку.");
             (target / "eula.txt").write_text("eula=false\n", encoding="utf-8")
             (target / "server.properties").write_text(f"server-port={port}\n", encoding="utf-8")
             profile = {"id": os.urandom(8).hex(), "name": name, "folder": str(target),
