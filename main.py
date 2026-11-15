@@ -545,6 +545,10 @@ class App:
                                bg="#081318", fg=GREEN if self.running(profile) else "#ff9db0",
                                padx=14, pady=6, font=("Segoe UI", 9, "bold"))
         hero.actions.append(self.status)
+        hero.actions.append(tk.Button(
+            hero, text="Удалить сервер", command=self.delete_server,
+            bg="#552331", fg="#ffdce3", relief="flat", padx=12, pady=8
+        ))
 
         if section == "console":
             self.render_console()
@@ -678,7 +682,16 @@ class App:
                  bg=PANEL, fg=MUTED, wraplength=620, justify="left").pack(anchor="w", pady=12)
 
     def log(self, text):
-        self.output.configure(state="normal")
+        # Логирование может вызываться на главном экране, где консоль ещё не создана.
+        output = getattr(self, "output", None)
+        if output is None:
+            return
+        try:
+            if not output.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        output.configure(state="normal")
         tag = ""
         if re.search(r"(?i)\b(ERROR|SEVERE|Exception|FATAL)\b", text):
             tag = "err"
@@ -690,12 +703,12 @@ class App:
             tag = "cmd"
         stamp = re.match(r"^(\[\d\d:\d\d:\d\d\])(.*)$", text)
         if stamp:
-            self.output.insert("end", stamp.group(1), "ts")
-            self.output.insert("end", stamp.group(2) + "\n", tag)
+            output.insert("end", stamp.group(1), "ts")
+            output.insert("end", stamp.group(2) + "\n", tag)
         else:
-            self.output.insert("end", text + "\n", tag)
-        self.output.see("end")
-        self.output.configure(state="disabled")
+            output.insert("end", text + "\n", tag)
+        output.see("end")
+        output.configure(state="disabled")
 
     def refresh_servers(self):
         try:
@@ -840,6 +853,81 @@ class App:
         self.refresh_servers()
         self.choose()
         self.log("Профиль создан. Выберите JAR-файл в настройках или при запуске.")
+
+    def delete_server(self):
+        profile = self.current()
+        if not profile:
+            messagebox.showinfo("Удаление сервера", "Сначала выберите сервер.")
+            return
+        if self.running(profile):
+            messagebox.showwarning(
+                "Сервер запущен",
+                "Сначала остановите сервер. Удаление работающего сервера запрещено."
+            )
+            return
+
+        folder = Path(profile.get("folder", "")).expanduser()
+        try:
+            resolved = folder.resolve(strict=True)
+        except (OSError, RuntimeError):
+            resolved = None
+
+        # Не позволяем удалять корневые и служебные каталоги.
+        protected = [Path.home().resolve(), DATA.resolve()]
+        if resolved and (resolved in protected or any(p in resolved.parents for p in protected)):
+            messagebox.showerror(
+                "Удаление запрещено",
+                "Папка сервера находится внутри домашнего или служебного каталога. "
+                "Профиль можно убрать из списка, не удаляя файлы."
+            )
+            delete_files = False
+        else:
+            choice = messagebox.askyesnocancel(
+                "Удалить сервер?",
+                f'Удалить профиль «{profile.get("name", "Сервер")}»?\n\n'
+                "Да — удалить профиль И ВСЮ папку сервера с миром, плагинами и настройками.\n"
+                "Нет — убрать сервер только из списка, файлы оставить.\n"
+                "Отмена — ничего не менять."
+            )
+            if choice is None:
+                return
+            delete_files = bool(choice)
+
+        if delete_files:
+            if not resolved or not resolved.is_dir():
+                messagebox.showerror(
+                    "Удаление сервера",
+                    "Папка сервера не найдена. Профиль не удалён."
+                )
+                return
+            try:
+                import shutil
+                shutil.rmtree(resolved)
+            except Exception as error:
+                messagebox.showerror(
+                    "Удаление сервера",
+                    f"Не удалось удалить папку сервера. Профиль оставлен в списке.\n\n{error}"
+                )
+                return
+
+        server_name = profile.get("name", "Сервер")
+        self.items = [item for item in self.items if item.get("id") != profile.get("id")]
+        try:
+            self.save()
+        except Exception as error:
+            messagebox.showerror(
+                "Удаление сервера",
+                f"Не удалось сохранить список серверов.\n\n{error}"
+            )
+            return
+        self.selected = None
+        self.show_home()
+        self.refresh_servers()
+        messagebox.showinfo(
+            "Удаление сервера",
+            f'Сервер «{server_name}» удалён из приложения.'
+            + (" Папка сервера также удалена." if delete_files else " Файлы сервера сохранены.")
+        )
 
     def edit(self):
         profile = self.current()
@@ -1425,9 +1513,18 @@ class App:
         threading.Thread(target=fetch, daemon=True).start()
 
     def check_updates(self):
-        self.log("Проверяем обновления на GitHub…")
-        button_thread = threading.Thread(target=self._check_updates_worker, daemon=True)
-        button_thread.start()
+        # Проверка запускается и с главного экрана, где консольного виджета нет.
+        self.root.after(0, lambda: self._set_update_button_state(True))
+        threading.Thread(target=self._check_updates_worker, daemon=True).start()
+
+    def _set_update_button_state(self, checking):
+        # Не обращаемся к уже уничтоженным элементам интерфейса.
+        if getattr(self, "root", None) is None:
+            return
+        if checking:
+            self.root.title("Pristal-Pilot by MrSkrenh — проверка обновлений")
+        else:
+            self.root.title("Pristal-Pilot by MrSkrenh")
 
     def _check_updates_worker(self):
         try:
@@ -1444,6 +1541,7 @@ class App:
             if latest_parts <= current_parts:
                 self.root.after(0, lambda: messagebox.showinfo(
                     "Обновления", f"У вас актуальная версия Pristal-Pilot ({APP_VERSION})."))
+                self.root.after(0, lambda: self._set_update_button_state(False))
                 return
             asset = next((a for a in release.get("assets", [])
                           if a.get("name") == "Pristal-Pilot-Setup.exe"), None)
@@ -1451,9 +1549,11 @@ class App:
                 raise RuntimeError("В последнем релизе не найден Pristal-Pilot-Setup.exe.")
             notes = release.get("body") or "Список изменений не опубликован."
             self.root.after(0, lambda: self._offer_update(latest, asset, notes))
+            self.root.after(0, lambda: self._set_update_button_state(False))
         except Exception as error:
             self.root.after(0, lambda err=str(error): messagebox.showerror(
                 "Проверка обновлений", f"Не удалось проверить обновления:\n{err}"))
+            self.root.after(0, lambda: self._set_update_button_state(False))
 
     def _offer_update(self, version, asset, notes):
         if not messagebox.askyesno(
