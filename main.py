@@ -27,7 +27,7 @@ except ImportError:
 DATA = Path(os.getenv("APPDATA", str(Path.home()))) / "Pristal-Pilot"
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
-APP_VERSION = "0.8.3"
+APP_VERSION = "0.8.4"
 GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
 BG, PANEL, PANEL2 = "#060e13", "#0b1a21", "#10262e"
 FG, MUTED, BLUE, GREEN, RED = "#e8fbf6", "#7fa3a5", "#0f9d8c", "#6dff9c", "#e0526d"
@@ -872,12 +872,25 @@ class App:
         except (OSError, RuntimeError):
             resolved = None
 
-        # Не позволяем удалять корневые и служебные каталоги.
-        protected = [Path.home().resolve(), DATA.resolve()]
-        if resolved and (resolved in protected or any(p in resolved.parents for p in protected)):
+        # Защищаем корень диска, домашнюю папку, папку приложения и сам каталог данных.
+        home = Path.home().resolve()
+        app_root = (Path(sys.executable).resolve().parent if getattr(sys, "frozen", False)
+                    else Path(__file__).resolve().parent)
+        app_root = app_root.resolve()
+        drive_root = Path(resolved.anchor).resolve() if resolved else None
+        protected_exact = {home, DATA.resolve()}
+        unsafe_folder = bool(
+            resolved and (
+                resolved in protected_exact
+                or (drive_root is not None and resolved == drive_root)
+                or resolved == app_root
+                or app_root in resolved.parents
+            )
+        )
+        if unsafe_folder:
             messagebox.showerror(
                 "Удаление запрещено",
-                "Папка сервера находится внутри домашнего или служебного каталога. "
+                "Выбрана корневая или служебная папка приложения. "
                 "Профиль можно убрать из списка, не удаляя файлы."
             )
             delete_files = False
