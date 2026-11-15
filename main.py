@@ -1254,7 +1254,8 @@ class App:
                     metadata = json.loads(response.read().decode("utf-8"))
                 url = metadata["downloads"]["server"]["url"]
             if core not in ("Forge", "NeoForge"):
-                request = urllib.request.Request(url, headers=headers)
+                request_headers = paper_headers if core == "Paper" else headers
+                request = urllib.request.Request(url, headers=request_headers)
                 jar_path = target / "server.jar"
                 digest = hashlib.sha256()
                 with urllib.request.urlopen(request, timeout=180) as response, jar_path.open("wb") as output:
