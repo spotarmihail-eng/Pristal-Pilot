@@ -27,7 +27,7 @@ except ImportError:
 DATA = Path(os.getenv("APPDATA", str(Path.home()))) / "Pristal-Pilot"
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
-APP_VERSION = "0.8.1"
+APP_VERSION = "0.8.2"
 GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
 BG, PANEL, PANEL2 = "#060e13", "#0b1a21", "#10262e"
 FG, MUTED, BLUE, GREEN, RED = "#e8fbf6", "#7fa3a5", "#0f9d8c", "#6dff9c", "#e0526d"
@@ -80,7 +80,10 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     def save(self):
-        DB.write_text(json.dumps(self.items, ensure_ascii=False, indent=2), encoding="utf-8")
+        DATA.mkdir(parents=True, exist_ok=True)
+        temp_db = DB.with_suffix(".tmp")
+        temp_db.write_text(json.dumps(self.items, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temp_db, DB)
 
     def current(self):
         if self.selected is None or self.selected >= len(self.items):
@@ -774,16 +777,39 @@ class App:
             if not accepted.get():
                 return
             try:
-                eula_path = Path(profile["folder"]) / "eula.txt"
-                eula_path.write_text("# Minecraft EULA accepted in Pristal-Pilot\neula=true\n",
+                server_folder = Path(profile["folder"]).expanduser()
+                server_folder.mkdir(parents=True, exist_ok=True)
+                eula_path = server_folder / "eula.txt"
+                temp_eula = server_folder / "eula.txt.tmp"
+                temp_eula.write_text("# Minecraft EULA accepted in Pristal-Pilot\neula=true\n",
                                      encoding="utf-8")
-                profile["eula_accepted"] = True
-                self.save()
-                window.grab_release()
-                window.destroy()
-                self.log("EULA принята для сервера " + profile["name"] + ".")
+                os.replace(temp_eula, eula_path)
             except OSError as error:
-                messagebox.showerror("EULA", f"Не удалось сохранить принятие EULA:\n{error}", parent=window)
+                messagebox.showerror(
+                    "EULA",
+                    "Не удалось записать eula.txt в папку сервера. "
+                    "Проверьте доступ к папке и свободное место.\n\n"
+                    f"Папка: {profile.get('folder', 'не указана')}\nОшибка: {error}",
+                    parent=window
+                )
+                return
+
+            profile["eula_accepted"] = True
+            try:
+                self.save()
+            except OSError as error:
+                messagebox.showerror(
+                    "Сохранение профиля",
+                    "Файл EULA сохранён, но не удалось обновить список серверов. "
+                    "Перезапустите приложение и проверьте, сохранился ли сервер.\n\n"
+                    f"Ошибка: {error}",
+                    parent=window
+                )
+                return
+
+            window.grab_release()
+            window.destroy()
+            self.log("EULA принята для сервера " + profile["name"] + ".")
 
         buttons = tk.Frame(window, bg=PANEL)
         buttons.pack(fill="x", padx=22, pady=(12, 20))
@@ -1090,14 +1116,14 @@ class App:
                 widget.insert(0, default)
             widget.grid(row=row, column=1, padx=18, pady=7, ipady=5)
             fields[key] = widget
-        folder_var = tk.StringVar(value=str(Path.home() / "Pristal-Pilot-Servers" / "my-server"))
-        tk.Label(win, text="Папка", bg=PANEL, fg=MUTED).grid(row=8, column=0, padx=18, pady=7, sticky="w")
+        folder_var = tk.StringVar(value=str(DATA / "servers"))
+        tk.Label(win, text="Папка для серверов", bg=PANEL, fg=MUTED).grid(row=8, column=0, padx=18, pady=7, sticky="w")
         tk.Entry(win, textvariable=folder_var, width=31, bg=BG, fg=FG, insertbackground=FG, relief="flat").grid(row=8, column=1, padx=18, pady=7, ipady=5)
         def browse():
-            chosen = filedialog.askdirectory()
+            chosen = filedialog.askdirectory(title="Выберите общую папку для серверов")
             if chosen:
                 folder_var.set(chosen)
-        tk.Button(win, text="Выбрать папку…", command=browse, bg="#16424a", fg=FG, relief="flat").grid(row=9, column=1, padx=18, pady=5, sticky="e")
+        tk.Button(win, text="Выбрать расположение…", command=browse, bg="#16424a", fg=FG, relief="flat").grid(row=9, column=1, padx=18, pady=5, sticky="e")
         tk.Label(win, text="Доступны Paper, Purpur, Vanilla, Fabric, Forge и NeoForge. Для модов дополнительно установите совместимые файлы в mods.",
                  bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).grid(row=10, column=0, columnspan=2, padx=18, pady=8, sticky="w")
         def submit():
@@ -1105,12 +1131,18 @@ class App:
                 name, core, version = fields["name"].get().strip(), fields["core"].get(), fields["version"].get().strip()
                 java = fields["java"].get().strip() or "java"
                 low, high, port = float(fields["minimum"].get()), float(fields["ram"].get()), int(fields["port"].get())
-                folder = Path(folder_var.get()).expanduser()
+                base_folder = Path(folder_var.get()).expanduser()
                 if not name or not version or low <= 0 or high < low or not 1 <= port <= 65535:
                     raise ValueError
-                if folder.exists() and any(folder.iterdir()):
-                    messagebox.showerror("Папка занята", "Выберите пустую папку, чтобы не затронуть существующие файлы.", parent=win)
-                    return
+                if not str(base_folder).strip():
+                    raise ValueError
+                # Для каждого сервера создаём отдельную папку с безопасным уникальным именем.
+                slug = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip(" .-_") or "server"
+                folder = base_folder / slug
+                suffix = 2
+                while folder.exists():
+                    folder = base_folder / f"{slug}-{suffix}"
+                    suffix += 1
             except Exception:
                 messagebox.showerror("Параметры", "Проверьте название, версию, RAM и порт (1–65535).", parent=win)
                 return
