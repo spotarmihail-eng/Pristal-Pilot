@@ -1244,7 +1244,7 @@ class App:
                 java = fields["java"].get().strip() or "java"
                 low, high, port = float(fields["minimum"].get()), float(fields["ram"].get()), int(fields["port"].get())
                 base_folder = Path(folder_var.get()).expanduser()
-                if not name or not version or low <= 0 or high < low or not 1 <= port <= 65535:
+                if not name or (not version and core != "Pumpkin") or low <= 0 or high < low or not 1 <= port <= 65535:
                     raise ValueError
                 if not str(base_folder).strip():
                     raise ValueError
