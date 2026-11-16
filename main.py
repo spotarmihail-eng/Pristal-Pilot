@@ -27,7 +27,7 @@ except ImportError:
 DATA = Path(os.getenv("APPDATA", str(Path.home()))) / "Pristal-Pilot"
 DATA.mkdir(parents=True, exist_ok=True)
 DB = DATA / "servers.json"
-APP_VERSION = "0.8.4"
+APP_VERSION = "0.8.5"
 GITHUB_RELEASE_API = "https://api.github.com/repos/spotarmihail-eng/Pristal-Pilot/releases/latest"
 BG, PANEL, PANEL2 = "#060e13", "#0b1a21", "#10262e"
 FG, MUTED, BLUE, GREEN, RED = "#e8fbf6", "#7fa3a5", "#0f9d8c", "#6dff9c", "#e0526d"
@@ -994,7 +994,7 @@ class App:
             eula_text = eula_path.read_text(encoding="utf-8", errors="replace") if eula_path.is_file() else ""
         except OSError:
             eula_text = ""
-        if not re.search(r"(?im)^\s*eula\s*=\s*true\s*$", eula_text):
+        if profile.get("core") != "Pumpkin" and not re.search(r"(?im)^\s*eula\s*=\s*true\s*$", eula_text):
             profile["eula_accepted"] = False
             self.show_eula_dialog(profile)
             return
@@ -1006,26 +1006,35 @@ class App:
         if active >= 3:
             messagebox.showwarning("Лимит серверов", "Можно одновременно запускать не более 3 серверов.")
             return
-        jar = Path(profile["folder"]) / profile.get("jar", "server.jar")
-        if not profile.get("launch_args") and not jar.is_file():
+        if profile.get("core") == "Pumpkin":
+            executable = Path(profile["folder"]) / profile.get("executable", "pumpkin.exe")
+            if not executable.is_file():
+                messagebox.showerror("Файлы ядра", "Не найден исполняемый файл Pumpkin. Создайте сервер заново или восстановите pumpkin.exe.")
+                return
+        else:
+            jar = Path(profile["folder"]) / profile.get("jar", "server.jar")
+        if profile.get("core") != "Pumpkin" and not profile.get("launch_args") and not jar.is_file():
             selected = filedialog.askopenfilename(
                 initialdir=profile["folder"], filetypes=[("Java JAR", "*.jar")])
             if not selected:
                 return
             profile["folder"], profile["jar"] = str(Path(selected).parent), Path(selected).name
             self.save()
-        if profile.get("launch_args") and not (Path(profile["folder"]) / profile["launch_args"].lstrip("@")).is_file():
+        if profile.get("core") != "Pumpkin" and profile.get("launch_args") and not (Path(profile["folder"]) / profile["launch_args"].lstrip("@")).is_file():
             messagebox.showerror("Файлы ядра", "Не найден файл аргументов запуска Forge/NeoForge. Попробуйте создать сервер заново.")
             return
         try:
             low, high = int(float(profile["minimum"])), int(float(profile["ram"]))
             if low <= 0 or high < low:
                 raise ValueError("Некорректные значения RAM.")
-            command = [profile["java"], f"-Xms{low}G", f"-Xmx{high}G"]
-            if profile.get("launch_args"):
-                command.extend([profile["launch_args"], "nogui"])
+            if profile.get("core") == "Pumpkin":
+                command = [str(Path(profile["folder"]) / profile.get("executable", "pumpkin.exe"))]
             else:
-                command.extend(["-jar", profile["jar"], "nogui"])
+                command = [profile["java"], f"-Xms{low}G", f"-Xmx{high}G"]
+                if profile.get("launch_args"):
+                    command.extend([profile["launch_args"], "nogui"])
+                else:
+                    command.extend(["-jar", profile["jar"], "nogui"])
             proc = subprocess.Popen(
                 command,
                 cwd=profile["folder"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -1207,7 +1216,7 @@ class App:
         for row, (label, key, default) in enumerate(rows, start=1):
             tk.Label(win, text=label, bg=PANEL, fg=MUTED).grid(row=row, column=0, padx=18, pady=7, sticky="w")
             if key == "core":
-                widget = ttk.Combobox(win, values=["Paper", "Purpur", "Vanilla", "Fabric", "Forge", "NeoForge"], state="readonly", width=28)
+                widget = ttk.Combobox(win, values=["Paper", "Purpur", "Vanilla", "Fabric", "Forge", "NeoForge", "Pumpkin (Rust)"], state="readonly", width=28)
                 widget.set(default)
             elif key == "java":
                 widget = ttk.Combobox(win, values=["java", "java17", "java21", "java8"], width=28)
@@ -1225,11 +1234,13 @@ class App:
             if chosen:
                 folder_var.set(chosen)
         tk.Button(win, text="Выбрать расположение…", command=browse, bg="#16424a", fg=FG, relief="flat").grid(row=9, column=1, padx=18, pady=5, sticky="e")
-        tk.Label(win, text="Доступны Paper, Purpur, Vanilla, Fabric, Forge и NeoForge. Для модов дополнительно установите совместимые файлы в mods.",
+        tk.Label(win, text="Доступны Paper, Purpur, Vanilla, Fabric, Forge, NeoForge и Pumpkin (Rust). Pumpkin использует собственные WASM-плагины и не запускает обычные моды Fabric/Forge.",
                  bg=PANEL, fg=MUTED, font=("Segoe UI", 8)).grid(row=10, column=0, columnspan=2, padx=18, pady=8, sticky="w")
         def submit():
             try:
                 name, core, version = fields["name"].get().strip(), fields["core"].get(), fields["version"].get().strip()
+                if core == "Pumpkin (Rust)":
+                    core = "Pumpkin"
                 java = fields["java"].get().strip() or "java"
                 low, high, port = float(fields["minimum"].get()), float(fields["ram"].get()), int(fields["port"].get())
                 base_folder = Path(folder_var.get()).expanduser()
@@ -1262,7 +1273,41 @@ class App:
             headers = {"User-Agent": "Pristal-Pilot"}
             launch_args = None
             expected_sha256 = None
-            if core == "Paper":
+            if core == "Pumpkin":
+                with urllib.request.urlopen(urllib.request.Request(
+                    "https://api.github.com/repos/Pumpkin-MC/Pumpkin/releases/latest",
+                    headers={"Accept": "application/vnd.github+json", **headers}), timeout=30) as response:
+                    release = json.loads(response.read().decode("utf-8"))
+                tag = release.get("tag_name", "")
+                mc_match = re.search(r"\+(\d+(?:\.\d+)+)-", tag)
+                if not mc_match:
+                    raise RuntimeError("Не удалось определить версию Minecraft в последнем релизе Pumpkin.")
+                version = mc_match.group(1)
+                asset = next((item for item in release.get("assets", [])
+                              if item.get("name") == "pumpkin-X64-Windows.exe"), None)
+                if not asset:
+                    raise RuntimeError("В релизе Pumpkin не найден файл для Windows x64.")
+                executable_path = target / "pumpkin.exe"
+                digest = hashlib.sha256()
+                request = urllib.request.Request(asset["browser_download_url"], headers=headers)
+                with urllib.request.urlopen(request, timeout=180) as response, executable_path.open("wb") as output:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        output.write(chunk)
+                        digest.update(chunk)
+                expected = asset.get("digest", "")
+                if expected.startswith("sha256:") and digest.hexdigest().lower() != expected.split(":", 1)[1].lower():
+                    executable_path.unlink(missing_ok=True)
+                    raise RuntimeError("Контрольная сумма Pumpkin не совпала. Загрузка отменена.")
+                (target / "pumpkin.toml").write_text(
+                    f'[networking.java]\nenabled = true\naddress = "0.0.0.0:{port}"\n\n'
+                    '[networking.bedrock]\nenabled = false\n\n'
+                    '[commands]\nuse_console = true\nuse_tty = false\n\n'
+                    '[logging]\nenabled = true\ncolor = false\n', encoding="utf-8")
+                launch_args = None
+            elif core == "Paper":
                 # PaperMC отключил старый API v2 (HTTP 410); используем Fill API v3.
                 api = (f"https://fill.papermc.io/v3/projects/paper/versions/"
                        f"{urllib.parse.quote(version)}/builds")
@@ -1354,7 +1399,7 @@ class App:
                 with urllib.request.urlopen(item["url"], timeout=30) as response:
                     metadata = json.loads(response.read().decode("utf-8"))
                 url = metadata["downloads"]["server"]["url"]
-            if core not in ("Forge", "NeoForge"):
+            if core not in ("Forge", "NeoForge", "Pumpkin"):
                 request_headers = paper_headers if core == "Paper" else headers
                 request = urllib.request.Request(url, headers=request_headers)
                 jar_path = target / "server.jar"
@@ -1371,20 +1416,25 @@ class App:
                     if digest.hexdigest().lower() != expected_sha256.lower():
                         jar_path.unlink(missing_ok=True)
                         raise RuntimeError("Paper: контрольная сумма скачанного файла не совпала. Повторите загрузку.");
-            (target / "eula.txt").write_text("eula=false\n", encoding="utf-8")
-            (target / "server.properties").write_text(f"server-port={port}\n", encoding="utf-8")
+            if core != "Pumpkin":
+                (target / "eula.txt").write_text("eula=false\n", encoding="utf-8")
+                (target / "server.properties").write_text(f"server-port={port}\n", encoding="utf-8")
             profile = {"id": os.urandom(8).hex(), "name": name, "folder": str(target),
-                       "jar": "server.jar", "launch_args": launch_args,
+                       "jar": "server.jar", "executable": "pumpkin.exe" if core == "Pumpkin" else None, "launch_args": launch_args,
                        "java": java, "ram": ram, "minimum": minimum, "port": str(port),
-                       "core": core, "version": version, "eula_accepted": False}
+                       "core": core, "version": version, "eula_accepted": core == "Pumpkin"}
             def done():
                 self.items.append(profile)
                 self.selected = len(self.items) - 1
                 self.save()
                 self.refresh_servers()
                 self.choose()
-                self.log(f"{core} {version} создан. Ожидается подтверждение EULA.")
-                self.show_eula_dialog(profile)
+                if core == "Pumpkin":
+                    self.log(f"Pumpkin (Rust) для Minecraft {version} создан. Java и EULA не требуются.")
+                    messagebox.showinfo("Сервер создан", f"Pumpkin (Rust) для Minecraft {version} успешно установлен.\n\nОбычные Java-плагины и Fabric/Forge-моды несовместимы; используйте плагины Pumpkin/WASM.")
+                else:
+                    self.log(f"{core} {version} создан. Ожидается подтверждение EULA.")
+                    self.show_eula_dialog(profile)
             self.root.after(0, done)
         except Exception as error:
             self.root.after(0, lambda err=str(error): messagebox.showerror("Ошибка создания сервера", err))
